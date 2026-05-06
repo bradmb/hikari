@@ -655,20 +655,20 @@ function aliasFieldsForFilter(field: string): string[] {
 function filterToken(field: string, value: string): string {
   const cleanValue = value.trim();
   if (!field || !cleanValue) return "";
-  return `${field}:${quoteValue(cleanValue)}`;
+  return `${field}:=${quoteValue(cleanValue)}`;
 }
 
 function expandedFilterToken(field: string, value: string): string {
   const cleanValue = value.trim();
   if (!field || !cleanValue) return "";
   if (field === "level") {
-    return `(${levelVariants(cleanValue).map((variant) => `${field}:${quoteValue(variant)}`).join(" OR ")})`;
+    return `(${levelVariants(cleanValue).map((variant) => `${field}:=${quoteValue(variant)}`).join(" OR ")})`;
   }
   const fields = aliasFieldsForFilter(field);
   if (fields.length > 1) {
-    return `(${fields.map((alias) => `${alias}:${quoteValue(cleanValue)}`).join(" OR ")})`;
+    return `(${fields.map((alias) => `${alias}:=${quoteValue(cleanValue)}`).join(" OR ")})`;
   }
-  return `${fields[0]}:${quoteValue(cleanValue)}`;
+  return `${fields[0]}:=${quoteValue(cleanValue)}`;
 }
 
 function addFilterToQuery(currentQuery: string, token: string): string {
@@ -690,9 +690,9 @@ function expandedFilterTokenForValues(field: string, values: string[]): string {
   if (cleanValues.length === 1) return expandedFilterToken(field, cleanValues[0]);
   const tokens = cleanValues.map((value) => {
     if (field === "level") {
-      return levelVariants(value).map((variant) => `${field}:${quoteValue(variant)}`);
+      return levelVariants(value).map((variant) => `${field}:=${quoteValue(variant)}`);
     }
-    return aliasFieldsForFilter(field).map((alias) => `${alias}:${quoteValue(value)}`);
+    return aliasFieldsForFilter(field).map((alias) => `${alias}:=${quoteValue(value)}`);
   }).flat();
   return `(${Array.from(new Set(tokens)).join(" OR ")})`;
 }
