@@ -30,11 +30,28 @@ FIELDS = [
     "logger",
     "kubernetes.pod_namespace",
     "kubernetes.pod_name",
+    "kubernetes.container_image",
+    "kubernetes.pod_id",
+    "kubernetes.pod_ip",
+    "kubernetes.pod_labels.app.kubernetes.io/name",
+    "kubernetes.pod_labels.controller-revision-hash",
+    "kubernetes.pod_labels.pod-template-generation",
+    "kubernetes.pod_labels.pod-template-hash",
     "kubernetes.container_name",
     "kubernetes.node_name",
 ]
 
 SERVICES = ["api-service", "customer-portal", "notification-gateway", "hikari", "deploy-runner", "worker"]
+HOSTS = [
+    "ip-100-80-8-98.us-east-2.compute.internal",
+    "ip-100-82-11-211.us-east-2.compute.internal",
+    "ip-100-81-16-28.us-east-2.compute.internal",
+    "ip-100-80-51-163.us-east-2.compute.internal",
+    "ip-100-81-31-190.us-east-2.compute.internal",
+    "ip-100-82-27-166.us-east-2.compute.internal",
+    "ip-100-81-26-91.us-east-2.compute.internal",
+    "ip-100-80-33-170.us-east-2.compute.internal",
+]
 LEVELS = ["Information", "Information", "Information", "Warning", "Error", "Debug"]
 ENVIRONMENTS = ["production", "production", "staging", "demo"]
 CLIENTS = ["alpha", "beta", "gamma", "demo", "partner"]
@@ -72,6 +89,7 @@ def _rows(count: int = 15 * 500) -> list[dict[str, Any]]:
         level = LEVELS[(index * 3 + 1) % len(LEVELS)]
         environment = ENVIRONMENTS[(index * 5 + 2) % len(ENVIRONMENTS)]
         client = CLIENTS[(index * 7 + 3) % len(CLIENTS)]
+        host = HOSTS[index % len(HOSTS)]
         status = rng.choice([200, 200, 200, 201, 204, 400, 401, 404, 409, 500, 502])
         duration = rng.randint(18, 2400)
         timestamp = anchor + timedelta(minutes=minute_index, milliseconds=entry_in_minute * 120)
@@ -93,7 +111,7 @@ def _rows(count: int = 15 * 500) -> list[dict[str, Any]]:
                 "_msg": f"{message} service={service} client={client} status={status}",
                 "level": level,
                 "service": service,
-                "host": f"aks-node-{(index % 4) + 1}",
+                "host": host,
                 "status": status,
                 "environment": environment,
                 "client": client,
@@ -104,8 +122,15 @@ def _rows(count: int = 15 * 500) -> list[dict[str, Any]]:
                 "logger": f"Demo.{service.replace('-', '.').title()}",
                 "kubernetes.pod_namespace": "observability" if service == "hikari" else "application",
                 "kubernetes.pod_name": f"{service}-{1000 + index % 17}",
+                "kubernetes.container_image": f"registry.example.test/{service}:2026.05.{(index % 28) + 1:02d}",
+                "kubernetes.pod_id": f"pod-{index % 997:08x}-{index % 389:04x}",
+                "kubernetes.pod_ip": f"100.{80 + index % 3}.{index % 255}.{10 + index % 200}",
+                "kubernetes.pod_labels.app.kubernetes.io/name": service,
+                "kubernetes.pod_labels.controller-revision-hash": f"{service}-{index % 11:08x}",
+                "kubernetes.pod_labels.pod-template-generation": str((index % 5) + 1),
+                "kubernetes.pod_labels.pod-template-hash": f"{index % 8191:010x}",
                 "kubernetes.container_name": service,
-                "kubernetes.node_name": f"aks-userpool-{index % 5}",
+                "kubernetes.node_name": host,
             }
         )
 

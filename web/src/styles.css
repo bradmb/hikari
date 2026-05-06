@@ -640,10 +640,15 @@ button {
 }
 
 .facet-list {
-  display: grid;
+  display: block;
+  min-width: 0;
+  overflow: hidden;
 }
 
 details {
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
   border-top: 1px solid var(--border-soft);
 }
 
@@ -663,6 +668,7 @@ summary {
   list-style: none;
   padding: 0 14px;
   cursor: pointer;
+  margin-right: 8px;
 }
 
 summary:hover {
@@ -670,7 +676,12 @@ summary:hover {
 }
 
 summary > span {
+  display: block;
+  min-width: 0;
   flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 summary::before {
@@ -688,6 +699,7 @@ details[open] > summary::before {
 }
 
 summary svg {
+  flex: 0 0 auto;
   color: var(--text-dim);
 }
 
@@ -746,6 +758,7 @@ summary svg {
 }
 
 .facet-list span {
+  display: block;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1393,9 +1406,16 @@ time {
   font-size: inherit;
 }
 
+.drawer-head button svg {
+  display: block;
+}
+
 .drawer-head button[aria-label="Close"] {
   width: 32px;
   padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .event-panel p {
