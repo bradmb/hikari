@@ -22,9 +22,13 @@ import "./styles.css";
 const defaultFields = [
   "environment",
   "service",
+  "service.name",
   "host",
   "hostname",
+  "host.name",
+  "MachineName",
   "level",
+  "severity_text",
   "source",
   "status",
   "client",
@@ -41,12 +45,15 @@ const defaultFields = [
 const hostFields = [
   "host",
   "hostname",
+  "host.name",
+  "MachineName",
   "kubernetes.pod_node_name",
   "kubernetes.node_name"
 ];
 
 const serviceFields = [
   "service",
+  "service.name",
   "app",
   "kubernetes.pod_labels.app.kubernetes.io/name",
   "kubernetes.pod_labels.k8s-app",
@@ -539,7 +546,7 @@ function levelLabel(level: string): string {
 }
 
 function levelValue(row: LogRow): string {
-  return asText(row.level ?? row.Level ?? row.severity ?? "info");
+  return asText(row.level ?? row.Level ?? row.severity ?? row.severity_text ?? "info");
 }
 
 function fieldValue(row: LogRow, field: string): string {
@@ -606,6 +613,12 @@ function aliasFieldsForFilter(field: string): string[] {
 function filterToken(field: string, value: string): string {
   const cleanValue = value.trim();
   if (!field || !cleanValue) return "";
+  return `${field}:${quoteValue(cleanValue)}`;
+}
+
+function expandedFilterToken(field: string, value: string): string {
+  const cleanValue = value.trim();
+  if (!field || !cleanValue) return "";
   if (field === "level") {
     return `(${levelVariants(cleanValue).map((variant) => `${field}:${quoteValue(variant)}`).join(" OR ")})`;
   }
@@ -626,6 +639,13 @@ function filterTokenForValues(field: string, values: string[]): string {
   const cleanValues = Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
   if (cleanValues.length === 0) return "";
   if (cleanValues.length === 1) return filterToken(field, cleanValues[0]);
+  return `(${cleanValues.map((value) => filterToken(field, value)).join(" OR ")})`;
+}
+
+function expandedFilterTokenForValues(field: string, values: string[]): string {
+  const cleanValues = Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+  if (cleanValues.length === 0) return "";
+  if (cleanValues.length === 1) return expandedFilterToken(field, cleanValues[0]);
   const tokens = cleanValues.map((value) => {
     if (field === "level") {
       return levelVariants(value).map((variant) => `${field}:${quoteValue(variant)}`);
@@ -663,6 +683,23 @@ function buildQueryWithFilters(query: string, currentFilters: AppliedFilter[], n
   });
 
   return { query: nextQuery, filters: filtersWithTokens };
+}
+
+function queryWithExpandedFilters(query: string, filters: AppliedFilter[]): string {
+  if (filters.length === 0) return query;
+  let nextQuery = stripAppliedFilterTokens(query, filters);
+  const grouped = new Map<string, AppliedFilter[]>();
+  filters.forEach((filter) => {
+    const group = grouped.get(filter.field) ?? [];
+    group.push(filter);
+    grouped.set(filter.field, group);
+  });
+
+  grouped.forEach((group, field) => {
+    const token = expandedFilterTokenForValues(field, group.map((filter) => filter.value));
+    if (token) nextQuery = addFilterToQuery(nextQuery, token);
+  });
+  return nextQuery;
 }
 
 function mergeFacetValues(field: string, ...sets: Array<ValueHit[] | undefined>): ValueHit[] {
@@ -955,6 +992,7 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copiedPrompt, setCopiedPrompt] = useState(false);
+  const [copiedJson, setCopiedJson] = useState(false);
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [aiRunning, setAiRunning] = useState(false);
   const [aiSteps, setAiSteps] = useState<AiStep[]>([]);
@@ -993,6 +1031,7 @@ function App() {
     selectedEventIdRef.current = id;
     setSelected(row);
     setCopiedPrompt(false);
+    setCopiedJson(false);
     setMode("explore");
     updateAppUrl("explore", id, replace);
   }
@@ -1001,6 +1040,7 @@ function App() {
     selectedEventIdRef.current = null;
     setSelected(null);
     setCopiedPrompt(false);
+    setCopiedJson(false);
     if (window.location.pathname === "/browse") updateAppUrl("explore", null, replace);
   }
 
@@ -1015,6 +1055,7 @@ function App() {
     if (row) {
       setSelected(row);
       setCopiedPrompt(false);
+      setCopiedJson(false);
     }
   }
 
@@ -1058,8 +1099,10 @@ function App() {
     setError("");
     try {
       const activeWindow = options.window ?? timeWindow;
+      const activeFilters = options.filters ?? appliedFilters;
       let activeQuery = nextQuery;
-      let searchResult = await searchLogs(activeQuery, 500, activeWindow);
+      let backendQuery = queryWithExpandedFilters(activeQuery, activeFilters);
+      let searchResult = await searchLogs(backendQuery, 500, activeWindow);
       const relaxations: string[] = [];
       if (options.relaxIfEmpty) {
         let attempts = 0;
@@ -1068,13 +1111,14 @@ function App() {
           if (!relaxed || relaxed === activeQuery) break;
           relaxations.push(relaxed);
           activeQuery = relaxed;
-          searchResult = await searchLogs(activeQuery, 500, activeWindow);
+          backendQuery = queryWithExpandedFilters(activeQuery, activeFilters);
+          searchResult = await searchLogs(backendQuery, 500, activeWindow);
           attempts += 1;
         }
       }
       const [hitResult, fieldResult] = await Promise.all([
-        getHits(activeQuery, "1m", activeWindow),
-        getFields(activeQuery, activeWindow)
+        getHits(backendQuery, "1m", activeWindow),
+        getFields(backendQuery, activeWindow)
       ]);
       const nextRows = searchResult.rows.length ? searchResult.rows : [];
       setRows(nextRows);
@@ -1089,7 +1133,7 @@ function App() {
       setTimeWindow(activeWindow);
       if (relaxations.length === 0) setDraftQuery(activeQuery);
       if (mode === "explore") {
-        updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery, options.filters ?? appliedFilters, activeWindow);
+        updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery, activeFilters, activeWindow);
       }
       setAiRelaxations(relaxations);
       setHits(hitResult.values ?? []);
@@ -1110,7 +1154,8 @@ function App() {
   async function loadFacet(field: string) {
     try {
       const fieldsToLoad = aliasFieldsForFilter(field);
-      const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(query, sourceField, timeWindow)));
+      const backendQuery = queryWithExpandedFilters(query, appliedFilters);
+      const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, timeWindow)));
       const nextValues = mergeFacetValues(field, ...results.map((result) => result.values));
       setFacets((current) => ({
         ...current,
@@ -1302,7 +1347,7 @@ function App() {
       return;
     }
     setLiveStatus("connecting");
-    const source = new EventSource(tailUrl(query));
+    const source = new EventSource(tailUrl(queryWithExpandedFilters(query, appliedFilters)));
     tailRef.current = source;
     source.onopen = () => setLiveStatus("streaming");
     source.onmessage = (event) => {
@@ -1318,7 +1363,7 @@ function App() {
       source.close();
       setLiveStatus("off");
     };
-  }, [live, query, mode, timeWindow]);
+  }, [live, query, appliedFilters, mode, timeWindow]);
 
   const histogram = useMemo(() => {
     const buckets = 60;
@@ -1408,6 +1453,13 @@ function App() {
     await copyText(promptForLogEvent(selected));
     setCopiedPrompt(true);
     window.setTimeout(() => setCopiedPrompt(false), 1800);
+  }
+
+  async function copySelectedJson() {
+    if (!selected) return;
+    await copyText(prettyLogJson(selected));
+    setCopiedJson(true);
+    window.setTimeout(() => setCopiedJson(false), 1800);
   }
 
   const logColumns = useMemo(() => {
@@ -1921,9 +1973,13 @@ function App() {
                 <span title={timeValue(selected)}>{localTimeValue(selected)}</span>
               </div>
               <div className="drawer-actions">
+                <button onClick={() => void copySelectedJson()} title="Copy log JSON">
+                  {copiedJson ? <CheckCircle2 size={16} /> : <Copy size={16} />}
+                  <span>{copiedJson ? "Copied" : "JSON"}</span>
+                </button>
                 <button onClick={() => void copySelectedPrompt()} title="Copy investigation prompt">
                   {copiedPrompt ? <CheckCircle2 size={16} /> : <Copy size={16} />}
-                  <span>{copiedPrompt ? "Copied" : "Copy prompt"}</span>
+                  <span>{copiedPrompt ? "Copied" : "Prompt"}</span>
                 </button>
                 <button onClick={() => clearSelectedLogEvent()} title="Close" aria-label="Close"><X size={17} /></button>
               </div>
