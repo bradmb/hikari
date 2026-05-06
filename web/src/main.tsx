@@ -422,8 +422,28 @@ function firstFieldValue(row: LogRow, fields: string[]): string {
   return "";
 }
 
+function parsedLogPayload(row: LogRow): Record<string, unknown> | null {
+  const raw = asText(row._msg ?? row.log);
+  if (!raw || !raw.startsWith("{")) return null;
+  try {
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown>
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function message(row: LogRow): string {
-  return asText(row._msg ?? row.message ?? row.msg ?? row.log);
+  const direct = asText(row.message ?? row.msg);
+  if (direct) return direct;
+  const payload = parsedLogPayload(row);
+  if (payload) {
+    const nested = asText(payload.msg ?? payload.message ?? payload.Message ?? payload.State ?? payload.state ?? payload.event);
+    if (nested) return nested;
+  }
+  return asText(row._msg ?? row.log);
 }
 
 function timeValue(row: LogRow): string {
@@ -968,9 +988,10 @@ function HikariSparkle({ size = 18, glow = true }: { size?: number; glow?: boole
   );
 }
 
-function buildFindings(rows: LogRow[]): string[] {
+function buildFindings(rows: LogRow[], totalMatches = rows.length): string[] {
   if (rows.length === 0) return [];
   const findings: string[] = [];
+  const sampleLabel = totalMatches > rows.length ? "sampled matches" : "matches";
 
   const counts = { error: 0, warning: 0, info: 0, debug: 0, other: 0 };
   rows.forEach((row) => {
@@ -978,7 +999,7 @@ function buildFindings(rows: LogRow[]): string[] {
   });
   const errorPct = Math.round((counts.error / rows.length) * 100);
   if (counts.error > 0) {
-    findings.push(`**${counts.error}** of ${rows.length} matches are errors (${errorPct}%); ${counts.warning} warnings, ${counts.info} info.`);
+    findings.push(`**${counts.error}** of ${rows.length} ${sampleLabel} are errors (${errorPct}%); ${counts.warning} warnings, ${counts.info} info.`);
   } else if (counts.warning > 0) {
     findings.push(`No errors in this set — ${counts.warning} warnings and ${counts.info} info events.`);
   } else {
@@ -1864,7 +1885,7 @@ function App() {
     void askAi(prompt);
   }
 
-  const findings = useMemo(() => buildFindings(rows), [rows]);
+  const findings = useMemo(() => buildFindings(rows, totalLogs), [rows, totalLogs]);
 
   const entityMap = useMemo<EntityMap>(() => {
     const map = buildEntityMap(rows);
