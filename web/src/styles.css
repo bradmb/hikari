@@ -1217,6 +1217,12 @@ time {
   place-items: center;
 }
 
+.drawer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .drawer-head button:hover,
 .field-grid button:hover {
   background: #262a33;
@@ -1224,8 +1230,25 @@ time {
 }
 
 .drawer-head button {
-  width: 32px;
+  min-width: 32px;
   height: 32px;
+  padding: 0 9px;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.drawer-head button span {
+  display: inline;
+  margin: 0;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+.drawer-head button[aria-label="Close"] {
+  width: 32px;
+  padding: 0;
 }
 
 .event-panel p {

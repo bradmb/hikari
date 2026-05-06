@@ -5,6 +5,7 @@ import {
   Bot,
   CheckCircle2,
   Clock,
+  Copy,
   Download,
   Filter,
   Pause,
@@ -210,6 +211,37 @@ function stableLogJson(row: LogRow): string {
     sorted[key] = row[key];
   });
   return JSON.stringify(sorted);
+}
+
+function prettyLogJson(row: LogRow): string {
+  return JSON.stringify(JSON.parse(stableLogJson(row)), null, 2);
+}
+
+function promptForLogEvent(row: LogRow): string {
+  return [
+    "Investigate this error. Identify the likely cause, affected component, impact, and the next concrete debugging steps.",
+    "",
+    "Full log event JSON:",
+    "```json",
+    prettyLogJson(row),
+    "```"
+  ].join("\n");
+}
+
+async function copyText(value: string): Promise<void> {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+    return;
+  }
+  const textarea = document.createElement("textarea");
+  textarea.value = value;
+  textarea.setAttribute("readonly", "");
+  textarea.style.position = "fixed";
+  textarea.style.opacity = "0";
+  document.body.appendChild(textarea);
+  textarea.select();
+  document.execCommand("copy");
+  textarea.remove();
 }
 
 function hashText(value: string): string {
@@ -922,6 +954,7 @@ function App() {
   const [manualValue, setManualValue] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [copiedPrompt, setCopiedPrompt] = useState(false);
   const [aiModalOpen, setAiModalOpen] = useState(false);
   const [aiRunning, setAiRunning] = useState(false);
   const [aiSteps, setAiSteps] = useState<AiStep[]>([]);
@@ -959,6 +992,7 @@ function App() {
     const id = storeLogEvent(row);
     selectedEventIdRef.current = id;
     setSelected(row);
+    setCopiedPrompt(false);
     setMode("explore");
     updateAppUrl("explore", id, replace);
   }
@@ -966,6 +1000,7 @@ function App() {
   function clearSelectedLogEvent(replace = false) {
     selectedEventIdRef.current = null;
     setSelected(null);
+    setCopiedPrompt(false);
     if (window.location.pathname === "/browse") updateAppUrl("explore", null, replace);
   }
 
@@ -977,7 +1012,10 @@ function App() {
       return;
     }
     const row = rowForEventId(id, nextRows);
-    if (row) setSelected(row);
+    if (row) {
+      setSelected(row);
+      setCopiedPrompt(false);
+    }
   }
 
   useEffect(() => {
@@ -1363,6 +1401,13 @@ function App() {
   function clearTimeWindow() {
     setTimeWindow({});
     void runSearch(draftQuery, { window: {}, filters: appliedFilters });
+  }
+
+  async function copySelectedPrompt() {
+    if (!selected) return;
+    await copyText(promptForLogEvent(selected));
+    setCopiedPrompt(true);
+    window.setTimeout(() => setCopiedPrompt(false), 1800);
   }
 
   const logColumns = useMemo(() => {
@@ -1875,7 +1920,13 @@ function App() {
                 <strong>Log event</strong>
                 <span title={timeValue(selected)}>{localTimeValue(selected)}</span>
               </div>
-              <button onClick={() => clearSelectedLogEvent()} title="Close"><X size={17} /></button>
+              <div className="drawer-actions">
+                <button onClick={() => void copySelectedPrompt()} title="Copy investigation prompt">
+                  {copiedPrompt ? <CheckCircle2 size={16} /> : <Copy size={16} />}
+                  <span>{copiedPrompt ? "Copied" : "Copy prompt"}</span>
+                </button>
+                <button onClick={() => clearSelectedLogEvent()} title="Close" aria-label="Close"><X size={17} /></button>
+              </div>
             </div>
             <p>{message(selected)}</p>
             <div className="field-grid">
