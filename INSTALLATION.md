@@ -89,6 +89,13 @@ HIKARI_OPENAI_MODEL=gpt-5.4-mini
 
 Without `OPENAI_API_KEY`, the regular log explorer and MCP non-AI tools can still run.
 
+If your MCP endpoint is exposed through a reverse proxy and you want MCP host
+header validation, set the public host names:
+
+```env
+HIKARI_MCP_ALLOWED_HOSTS=logs.example.com
+```
+
 ## MCP Endpoint
 
 Hikari exposes MCP over Streamable HTTP:

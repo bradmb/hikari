@@ -52,6 +52,8 @@ spec:
               value: {{ .Values.env.openAiSecretId | quote }}
             - name: HIKARI_OPENAI_MODEL
               value: {{ .Values.env.openAiModel | quote }}
+            - name: HIKARI_MCP_ALLOWED_HOSTS
+              value: {{ .Values.env.mcpAllowedHosts | quote }}
           readinessProbe:
             httpGet:
               path: /health

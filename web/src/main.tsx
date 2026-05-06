@@ -376,6 +376,63 @@ function addFilterToQuery(currentQuery: string, token: string): string {
   return `${currentQuery.trim()} ${token}`.trim();
 }
 
+function filterTokenForValues(field: string, values: string[]): string {
+  const cleanValues = Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
+  if (cleanValues.length === 0) return "";
+  if (cleanValues.length === 1) return filterToken(field, cleanValues[0]);
+  const tokens = cleanValues.map((value) => {
+    if (field === "level") {
+      return levelVariants(value).map((variant) => `${field}:${quoteValue(variant)}`);
+    }
+    return [`${field}:${quoteValue(value)}`];
+  }).flat();
+  return `(${Array.from(new Set(tokens)).join(" OR ")})`;
+}
+
+function stripAppliedFilterTokens(query: string, filters: AppliedFilter[]): string {
+  let next = query;
+  Array.from(new Set(filters.map((filter) => filter.token).filter(Boolean)))
+    .sort((left, right) => right.length - left.length)
+    .forEach((token) => {
+      next = next.split(token).join("");
+    });
+  return next.replace(/\s+/g, " ").trim() || "_time:15m";
+}
+
+function buildQueryWithFilters(query: string, currentFilters: AppliedFilter[], nextFilters: AppliedFilter[]) {
+  let nextQuery = stripAppliedFilterTokens(query, currentFilters);
+  const grouped = new Map<string, AppliedFilter[]>();
+  nextFilters.forEach((filter) => {
+    const group = grouped.get(filter.field) ?? [];
+    group.push(filter);
+    grouped.set(filter.field, group);
+  });
+
+  const filtersWithTokens: AppliedFilter[] = [];
+  grouped.forEach((group, field) => {
+    const token = filterTokenForValues(field, group.map((filter) => filter.value));
+    if (!token) return;
+    nextQuery = addFilterToQuery(nextQuery, token);
+    group.forEach((filter) => filtersWithTokens.push({ ...filter, token }));
+  });
+
+  return { query: nextQuery, filters: filtersWithTokens };
+}
+
+function mergeFacetValues(field: string, ...sets: Array<ValueHit[] | undefined>): ValueHit[] {
+  const values = new Map<string, number>();
+  sets.forEach((set) => {
+    set?.forEach((item) => {
+      const displayValue = displayFacetValue(field, item.value.trim());
+      if (!displayValue) return;
+      values.set(displayValue, Math.max(values.get(displayValue) ?? 0, item.hits));
+    });
+  });
+  return [...values.entries()]
+    .map(([value, hits]) => ({ value, hits }))
+    .sort((left, right) => right.hits - left.hits || left.value.localeCompare(right.value));
+}
+
 type EntityKind = "service" | "host" | "env" | "status" | "level";
 
 type EntityMap = Record<EntityKind, Set<string>>;
@@ -641,6 +698,8 @@ function App() {
   const [hits, setHits] = useState<Array<Record<string, unknown>>>([]);
   const [fields, setFields] = useState<string[]>(defaultFields);
   const [facets, setFacets] = useState<Record<string, ValueHit[]>>({});
+  const [facetCache, setFacetCache] = useState<Record<string, ValueHit[]>>({});
+  const [facetSearch, setFacetSearch] = useState("");
   const [selected, setSelected] = useState<LogRow | null>(null);
   const [appliedFilters, setAppliedFilters] = useState<AppliedFilter[]>([]);
   const [manualField, setManualField] = useState("host");
@@ -655,6 +714,7 @@ function App() {
   const [mode, setMode] = useState<ViewMode>("welcome");
   const tailRef = useRef<EventSource | null>(null);
   const aiCloseTimerRef = useRef<number | null>(null);
+  const manualValueRef = useRef<HTMLInputElement | null>(null);
   const tailSeenRef = useRef<Set<string>>(new Set());
   const tailQueueRef = useRef<LogRow[]>([]);
   const constellationRef = useRef<HTMLDivElement | null>(null);
@@ -688,7 +748,6 @@ function App() {
       setQuery(activeQuery);
       if (relaxations.length === 0) setDraftQuery(activeQuery);
       setAiRelaxations(relaxations);
-      setFacets({});
       setHits(hitResult.values ?? []);
       const nextFields = (fieldResult.values ?? [])
         .map((item) => item.value.trim())
@@ -707,9 +766,14 @@ function App() {
   async function loadFacet(field: string) {
     try {
       const result = await getFieldValues(query, field);
+      const nextValues = (result.values ?? []).filter((item) => item.value.trim());
       setFacets((current) => ({
         ...current,
-        [field]: (result.values ?? []).filter((item) => item.value.trim())
+        [field]: nextValues
+      }));
+      setFacetCache((current) => ({
+        ...current,
+        [field]: mergeFacetValues(field, current[field], nextValues)
       }));
     } catch {
       setFacets((current) => ({ ...current, [field]: [] }));
@@ -731,31 +795,28 @@ function App() {
   }
 
   function valuesForField(field: string): ValueHit[] {
-    const apiValues = (facets[field] ?? []).filter((item) => item.value.trim());
-    const source = apiValues.length ? apiValues : rowFacetValues(field);
-    if (field !== "level") return source;
-    const counts = new Map<string, number>();
-    source.forEach((item) => {
-      const displayValue = displayFacetValue(field, item.value);
-      if (displayValue) counts.set(displayValue, (counts.get(displayValue) ?? 0) + item.hits);
-    });
-    return [...counts.entries()]
-      .map(([value, hits]) => ({ value, hits }))
-      .sort((left, right) => right.hits - left.hits);
+    return mergeFacetValues(field, facets[field], facetCache[field], rowFacetValues(field));
   }
 
   function applyFilter(field: string, value: string) {
     const cleanValue = value.trim();
     if (!field || !cleanValue) return;
     const displayValue = displayFacetValue(field, cleanValue);
-    const token = filterToken(field, displayValue);
-    const next = addFilterToQuery(draftQuery, token);
-    setDraftQuery(next);
-    setAppliedFilters((current) => {
-      if (current.some((item) => item.field === field && item.value === displayValue)) return current;
-      return [...current, { field, value: displayValue, token }];
-    });
-    void runSearch(next);
+    if (appliedFilters.some((item) => item.field === field && item.value === displayValue)) return;
+    const nextFilters = [...appliedFilters, { field, value: displayValue, token: "" }];
+    const next = buildQueryWithFilters(draftQuery, appliedFilters, nextFilters);
+    setDraftQuery(next.query);
+    setAppliedFilters(next.filters);
+    void runSearch(next.query);
+  }
+
+  function submitManualFilter() {
+    if (manualValue.trim()) {
+      applyFilter(manualField, manualValue);
+      setManualValue("");
+      return;
+    }
+    manualValueRef.current?.focus();
   }
 
   function toggleFilter(field: string, value: string) {
@@ -769,13 +830,11 @@ function App() {
   }
 
   function removeFilter(filter: AppliedFilter) {
-    const next = draftQuery
-      .replace(filter.token, "")
-      .replace(/\s+/g, " ")
-      .trim() || "_time:15m";
-    setDraftQuery(next);
-    setAppliedFilters((current) => current.filter((item) => item !== filter));
-    void runSearch(next);
+    const nextFilters = appliedFilters.filter((item) => !(item.field === filter.field && item.value === filter.value));
+    const next = buildQueryWithFilters(draftQuery, appliedFilters, nextFilters);
+    setDraftQuery(next.query);
+    setAppliedFilters(next.filters);
+    void runSearch(next.query);
   }
 
   async function askAi(promptOverride?: string) {
@@ -1141,6 +1200,33 @@ function App() {
     return map;
   }, [rows, facets]);
 
+  const facetDefinitions = useMemo(() => {
+    const known = new Set(priorityFilters.map((filter) => filter.field));
+    return [
+      ...priorityFilters,
+      ...fields
+        .filter((field) => !known.has(field))
+        .map((field) => ({ field, label: field }))
+    ];
+  }, [fields]);
+
+  const visibleFacetDefinitions = useMemo(() => {
+    const term = facetSearch.trim().toLowerCase();
+    if (!term) return facetDefinitions;
+    return facetDefinitions.filter(({ field, label }) => {
+      if (field.toLowerCase().includes(term) || label.toLowerCase().includes(term)) return true;
+      return valuesForField(field).some((item) => item.value.toLowerCase().includes(term));
+    });
+  }, [facetDefinitions, facetSearch, facets, facetCache, rows]);
+
+  function visibleValuesForField(field: string, label: string): ValueHit[] {
+    const values = valuesForField(field);
+    const term = facetSearch.trim().toLowerCase();
+    if (!term) return values;
+    if (field.toLowerCase().includes(term) || label.toLowerCase().includes(term)) return values;
+    return values.filter((item) => item.value.toLowerCase().includes(term));
+  }
+
   function handleEntityClick(kind: EntityKind, value: string) {
     const field = fieldByEntity[kind];
     setMode("explore");
@@ -1223,12 +1309,17 @@ function App() {
       <aside className="facets">
         <div className="facet-search">
           <Search size={15} />
-          <input placeholder="Search facets" aria-label="Search facets" />
+          <input
+            value={facetSearch}
+            onChange={(event) => setFacetSearch(event.target.value)}
+            placeholder="Search facets"
+            aria-label="Search facets"
+          />
         </div>
 
         <div className="facet-summary">
-          <span>Showing {fields.length} of {fields.length}</span>
-          <button><Plus size={15} /> Add</button>
+          <span>Showing {visibleFacetDefinitions.length} of {facetDefinitions.length}</span>
+          <button type="button" onClick={submitManualFilter}><Plus size={15} /> Add</button>
         </div>
 
         <section className="filter-panel">
@@ -1238,12 +1329,12 @@ function App() {
               {fields.map((field) => <option key={field} value={field}>{field}</option>)}
             </select>
             <input
+              ref={manualValueRef}
               value={manualValue}
               onChange={(event) => setManualValue(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter") {
-                  applyFilter(manualField, manualValue);
-                  setManualValue("");
+                  submitManualFilter();
                 }
               }}
               placeholder="value"
@@ -1251,10 +1342,7 @@ function App() {
             />
             <button
               title="Apply filter"
-              onClick={() => {
-                applyFilter(manualField, manualValue);
-                setManualValue("");
-              }}
+              onClick={submitManualFilter}
             >
               <Plus size={15} />
             </button>
@@ -1272,11 +1360,11 @@ function App() {
           )}
 
           <div className="facet-list">
-            {priorityFilters.map(({ field, label }) => {
-              const values = valuesForField(field);
+            {visibleFacetDefinitions.map(({ field, label }) => {
+              const values = visibleValuesForField(field, label);
               if (values.length === 0) return null;
               return (
-                <details key={field} open={["environment", "service", "host", "level"].includes(field)}>
+                <details key={field} open={Boolean(facetSearch.trim()) || ["environment", "service", "host", "level"].includes(field)}>
                   <summary>
                     <span>{label}</span>
                     <CheckCircle2 size={13} />

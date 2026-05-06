@@ -24,6 +24,7 @@ env:
   victoriaUrl: http://victorialogs.example.svc:9428
   openAiSecretId: kubernetes/hikari/openai
   openAiModel: gpt-5.4-mini
+  mcpAllowedHosts: ""
 
 resources:
   requests:

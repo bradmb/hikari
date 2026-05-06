@@ -38,6 +38,7 @@ Common environment variables:
 - `HIKARI_DEFAULT_FIELDS`: comma-separated fields to surface in the UI.
 - `OPENAI_API_KEY`: optional, enables natural-language query generation.
 - `HIKARI_OPENAI_MODEL`: model used for natural-language query generation.
+- `HIKARI_MCP_ALLOWED_HOSTS`: optional comma-separated Host header allowlist for MCP DNS rebinding protection.
 
 AWS Secrets Manager variants are supported for deployments that load secrets at runtime:
 

@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .ai import generate_logsql
 from .models import AiQueryRequest
@@ -23,17 +24,41 @@ SUMMARY_FIELDS = {
     "pod": {"field": "kubernetes.pod_name", "label": "Pod"},
 }
 
-hikari_mcp = FastMCP(
-    "Hikari",
-    instructions=(
-        "Hikari queries application logs stored in VictoriaLogs. Use field and value discovery before "
-        "writing narrow LogsQL. Use ai_search when the user's request needs natural-language mapping "
-        "to observed services, Kubernetes metadata, clients, environments, levels, or message text."
-    ),
-    streamable_http_path="/",
-    stateless_http=True,
-    json_response=True,
-)
+def _transport_security_settings() -> TransportSecuritySettings:
+    allowed_hosts = get_settings().mcp_allowed_hosts
+    if not allowed_hosts:
+        return TransportSecuritySettings(enable_dns_rebinding_protection=False)
+
+    allowed_origins = []
+    for host in allowed_hosts:
+        if "://" in host:
+            allowed_origins.append(host)
+        else:
+            allowed_origins.extend([f"https://{host}", f"http://{host}"])
+
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
+def create_fastmcp_server() -> FastMCP:
+    return FastMCP(
+        "Hikari",
+        instructions=(
+            "Hikari queries application logs stored in VictoriaLogs. Use field and value discovery before "
+            "writing narrow LogsQL. Use ai_search when the user's request needs natural-language mapping "
+            "to observed services, Kubernetes metadata, clients, environments, levels, or message text."
+        ),
+        streamable_http_path="/",
+        stateless_http=True,
+        json_response=True,
+        transport_security=_transport_security_settings(),
+    )
+
+
+hikari_mcp = create_fastmcp_server()
 
 
 def _settings() -> Settings:
@@ -336,6 +361,7 @@ def create_hikari_mcp() -> FastMCP:
         streamable_http_path="/",
         stateless_http=True,
         json_response=True,
+        transport_security=_transport_security_settings(),
     )
     server.add_tool(
         get_instructions,

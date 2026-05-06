@@ -37,6 +37,7 @@ class Settings(BaseSettings):
     openai_model: str = Field("gpt-5.4-mini", alias="HIKARI_OPENAI_MODEL")
     aws_region: str = Field("us-east-1", alias="AWS_REGION")
     request_timeout_seconds: float = Field(30.0, alias="HIKARI_REQUEST_TIMEOUT_SECONDS")
+    mcp_allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="HIKARI_MCP_ALLOWED_HOSTS")
 
     @field_validator("victoria_headers", mode="before")
     @classmethod
@@ -60,6 +61,17 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(field) for field in value]
         raise ValueError("HIKARI_DEFAULT_FIELDS must be a comma-separated string")
+
+    @field_validator("mcp_allowed_hosts", mode="before")
+    @classmethod
+    def parse_mcp_allowed_hosts(cls, value: object) -> list[str]:
+        if value in (None, ""):
+            return []
+        if isinstance(value, str):
+            return [host.strip() for host in value.split(",") if host.strip()]
+        if isinstance(value, list):
+            return [str(host).strip() for host in value if str(host).strip()]
+        raise ValueError("HIKARI_MCP_ALLOWED_HOSTS must be a comma-separated string")
 
 
 def _read_secret(secret_id: str, region: str) -> str:
