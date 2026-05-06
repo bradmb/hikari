@@ -134,6 +134,7 @@ type ViewMode = "welcome" | "answer" | "explore";
 
 const defaultLogQuery = "_time:15m";
 const logQueryParam = "q";
+const facetParam = "facet";
 const selectedEventParam = "event";
 const selectedEventStoragePrefix = "hikari:selected-event:";
 
@@ -147,6 +148,39 @@ function selectedEventIdFromUrl(): string | null {
 
 function logQueryFromUrl(): string {
   return new URLSearchParams(window.location.search).get(logQueryParam)?.trim() || defaultLogQuery;
+}
+
+function serializeFacet(filter: Pick<AppliedFilter, "field" | "value">): string {
+  return `${filter.field}:${filter.value}`;
+}
+
+function parseFacet(value: string): AppliedFilter | null {
+  const separator = value.indexOf(":");
+  if (separator <= 0) return null;
+  const field = value.slice(0, separator).trim();
+  const rawValue = value.slice(separator + 1).trim();
+  if (!field || !rawValue) return null;
+  return { field, value: displayFacetValue(field, rawValue), token: "" };
+}
+
+function facetsFromUrl(): AppliedFilter[] {
+  const seen = new Set<string>();
+  return new URLSearchParams(window.location.search).getAll(facetParam).flatMap((value) => {
+    const facet = parseFacet(value);
+    if (!facet) return [];
+    const key = serializeFacet(facet);
+    if (seen.has(key)) return [];
+    seen.add(key);
+    return [facet];
+  });
+}
+
+function logStateFromUrl() {
+  const urlQuery = logQueryFromUrl();
+  const urlFacets = facetsFromUrl();
+  if (urlFacets.length === 0) return { query: urlQuery, filters: [] as AppliedFilter[] };
+  const next = buildQueryWithFilters(urlQuery, [], urlFacets);
+  return { query: next.query, filters: next.filters };
 }
 
 function stableLogJson(row: LogRow): string {
@@ -200,13 +234,24 @@ function rowForEventId(id: string, rows: LogRow[]): LogRow | null {
   return rows.find((row) => logEventId(row) === id) ?? storedLogEvent(id);
 }
 
-function buildAppUrl(mode: ViewMode, eventId?: string | null, logQuery?: string | null): string {
+function buildAppUrl(
+  mode: ViewMode,
+  eventId?: string | null,
+  logQuery?: string | null,
+  filters: Pick<AppliedFilter, "field" | "value">[] = []
+): string {
   const params = new URLSearchParams(window.location.search);
   const cleanQuery = (logQuery ?? params.get(logQueryParam) ?? "").trim();
   if (mode === "explore" && cleanQuery && cleanQuery !== defaultLogQuery) {
     params.set(logQueryParam, cleanQuery);
   } else {
     params.delete(logQueryParam);
+  }
+  params.delete(facetParam);
+  if (mode === "explore") {
+    filters.forEach((filter) => {
+      if (filter.field.trim() && filter.value.trim()) params.append(facetParam, serializeFacet(filter));
+    });
   }
   if (mode === "explore" && eventId) {
     params.set(selectedEventParam, eventId);
@@ -817,9 +862,9 @@ function relaxQuery(query: string): string | null {
 }
 
 function App() {
-  const initialLogQuery = logQueryFromUrl();
-  const [query, setQuery] = useState(initialLogQuery);
-  const [draftQuery, setDraftQuery] = useState(initialLogQuery);
+  const initialLogState = logStateFromUrl();
+  const [query, setQuery] = useState(initialLogState.query);
+  const [draftQuery, setDraftQuery] = useState(initialLogState.query);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiExplanation, setAiExplanation] = useState("");
   const [aiEvidence, setAiEvidence] = useState<string[]>([]);
@@ -831,7 +876,7 @@ function App() {
   const [facetCache, setFacetCache] = useState<Record<string, ValueHit[]>>({});
   const [facetSearch, setFacetSearch] = useState("");
   const [selected, setSelected] = useState<LogRow | null>(null);
-  const [appliedFilters, setAppliedFilters] = useState<AppliedFilter[]>([]);
+  const [appliedFilters, setAppliedFilters] = useState<AppliedFilter[]>(initialLogState.filters);
   const [manualField, setManualField] = useState("host");
   const [manualValue, setManualValue] = useState("");
   const [loading, setLoading] = useState(false);
@@ -851,9 +896,15 @@ function App() {
   const tailRecentRef = useRef<LogRow[]>([]);
   const selectedEventIdRef = useRef<string | null>(selectedEventIdFromUrl());
 
-  function updateAppUrl(nextMode: ViewMode, eventId?: string | null, replace = false, nextQuery = query) {
+  function updateAppUrl(
+    nextMode: ViewMode,
+    eventId?: string | null,
+    replace = false,
+    nextQuery = query,
+    nextFilters = appliedFilters
+  ) {
     if (!["/", "/browse"].includes(window.location.pathname)) return;
-    const next = buildAppUrl(nextMode, eventId, nextQuery);
+    const next = buildAppUrl(nextMode, eventId, nextQuery, nextFilters);
     const current = `${window.location.pathname}${window.location.search}`;
     if (current === next) return;
     window.history[replace ? "replaceState" : "pushState"]({}, "", next);
@@ -887,13 +938,14 @@ function App() {
   useEffect(() => {
     function handlePopState() {
       const nextMode = modeFromPath(window.location.pathname);
-      const nextQuery = logQueryFromUrl();
+      const nextState = logStateFromUrl();
       setMode(nextMode);
-      setQuery(nextQuery);
-      setDraftQuery(nextQuery);
+      setQuery(nextState.query);
+      setDraftQuery(nextState.query);
+      setAppliedFilters(nextMode === "explore" ? nextState.filters : []);
       if (nextMode === "explore") {
         restoreSelectedLogEvent();
-        void runSearch(nextQuery, { replaceUrl: true });
+        void runSearch(nextState.query, { replaceUrl: true, filters: nextState.filters });
       } else {
         selectedEventIdRef.current = null;
         setSelected(null);
@@ -908,11 +960,12 @@ function App() {
     if (mode !== "explore") {
       selectedEventIdRef.current = null;
       if (selected) setSelected(null);
+      if (appliedFilters.length > 0) setAppliedFilters([]);
     }
     updateAppUrl(mode, mode === "explore" ? selectedEventIdRef.current : null);
   }, [mode, selected]);
 
-  async function runSearch(nextQuery = draftQuery, options: { relaxIfEmpty?: boolean; replaceUrl?: boolean } = {}) {
+  async function runSearch(nextQuery = draftQuery, options: { relaxIfEmpty?: boolean; replaceUrl?: boolean; filters?: AppliedFilter[] } = {}) {
     setLoading(true);
     setError("");
     try {
@@ -946,7 +999,7 @@ function App() {
       setQuery(activeQuery);
       if (relaxations.length === 0) setDraftQuery(activeQuery);
       if (mode === "explore") {
-        updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery);
+        updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery, options.filters ?? appliedFilters);
       }
       setAiRelaxations(relaxations);
       setHits(hitResult.values ?? []);
@@ -1009,7 +1062,7 @@ function App() {
     const next = buildQueryWithFilters(draftQuery, appliedFilters, nextFilters);
     setDraftQuery(next.query);
     setAppliedFilters(next.filters);
-    void runSearch(next.query);
+    void runSearch(next.query, { filters: next.filters });
   }
 
   function submitManualFilter() {
@@ -1036,7 +1089,13 @@ function App() {
     const next = buildQueryWithFilters(draftQuery, appliedFilters, nextFilters);
     setDraftQuery(next.query);
     setAppliedFilters(next.filters);
-    void runSearch(next.query);
+    void runSearch(next.query, { filters: next.filters });
+  }
+
+  function runDraftQuery() {
+    const representedFilters = appliedFilters.filter((filter) => filter.token && draftQuery.includes(filter.token));
+    if (representedFilters.length !== appliedFilters.length) setAppliedFilters(representedFilters);
+    void runSearch(draftQuery, { filters: representedFilters });
   }
 
   async function askAi(promptOverride?: string) {
@@ -1062,7 +1121,8 @@ function App() {
         aiCloseTimerRef.current = null;
       }, 220);
       if (!startedFromExplore) setMode("answer");
-      void runSearch(result.query, { relaxIfEmpty: true });
+      setAppliedFilters([]);
+      void runSearch(result.query, { relaxIfEmpty: true, filters: [] });
     } catch (err) {
       window.clearInterval(timer);
       const message = err instanceof Error ? err.message : "AI query generation failed";
@@ -1117,7 +1177,7 @@ function App() {
   }
 
   useEffect(() => {
-    void runSearch(logQueryFromUrl(), { replaceUrl: true });
+    void runSearch(initialLogState.query, { replaceUrl: true, filters: initialLogState.filters });
   }, []);
 
   useEffect(() => {
@@ -1490,7 +1550,7 @@ function App() {
           <button className="icon-button" onClick={() => setLive((current) => !current)} title={live ? "Pause live tail" : "Start live tail"}>
             {live ? <Pause size={16} /> : <Play size={16} />}
           </button>
-          <button className="icon-button" onClick={() => void runSearch()} title="Run query">
+          <button className="icon-button" onClick={runDraftQuery} title="Run query">
             <RefreshCcw size={16} />
           </button>
         </div>
@@ -1503,12 +1563,12 @@ function App() {
             value={draftQuery}
             onChange={(event) => setDraftQuery(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") void runSearch();
+              if (event.key === "Enter") runDraftQuery();
             }}
             aria-label="LogsQL query"
             placeholder="Filter your logs. Press Space to search using natural language queries."
           />
-          <button className="add-button" onClick={() => void runSearch()}>Add</button>
+          <button className="add-button" onClick={runDraftQuery}>Add</button>
         </div>
         {appliedFilters.length > 0 && (
           <div className="active-filters query-active-filters" aria-label="Active filters">
