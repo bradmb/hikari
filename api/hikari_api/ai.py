@@ -19,6 +19,8 @@ DISCOVERY_FIELDS = [
     "host",
     "hostname",
     "level",
+    "severity",
+    "severity_text",
     "status",
     "client",
     "kubernetes.pod_namespace",
@@ -78,6 +80,8 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
             "Do not simply translate the prompt literally when observed values suggest a different spelling. "
             "When filtering on a structured field, use exact values that appear verbatim in observed field_values "
             "or sample rows. Do not add typo variants or guessed field values to structured field filters. "
+            "For severity, use the observed severity field. If severity_text is populated and level is not, "
+            "filter on severity_text rather than level. "
             "If you need an unobserved spelling variant, use it only as a free-text fallback and say that in evidence. "
             "Always quote structured field values, for example service:\"billing-api\" or "
             "kubernetes.pod_namespace:\"billing-production\". "
@@ -127,7 +131,7 @@ async def _discover_log_context(settings: Settings, request: AiQueryRequest, vl:
     if vl is None:
         return context
 
-    for field in fields[:12]:
+    for field in fields[:18]:
         try:
             result = await vl.query(
                 "/select/logsql/field_values",
@@ -213,6 +217,8 @@ def _summarize_row(row: dict[str, Any]) -> dict[str, Any]:
         "host",
         "hostname",
         "level",
+        "severity",
+        "severity_text",
         "_msg",
         "message",
         "msg",
@@ -335,13 +341,13 @@ def _expand_level_filters(query: str, discovery: dict[str, Any], prompt: str = "
         else:
             return match.group(0)
 
-        observed = _observed_level_variants(discovery, canonical)
+        level_field, observed = _observed_level_field_and_variants(discovery, canonical)
         if len(observed) < 2:
             return match.group(0)
 
         expanded[canonical] = observed
         quoted = ", ".join(json.dumps(level) for level in observed)
-        return f"level:in({quoted})"
+        return f"{level_field}:in({quoted})"
 
     def replace(match: re.Match[str]) -> str:
         value = match.group("exact") or match.group("quoted") or match.group("word") or ""
@@ -349,13 +355,13 @@ def _expand_level_filters(query: str, discovery: dict[str, Any], prompt: str = "
         if not canonical:
             return match.group(0)
 
-        values = _observed_level_variants(discovery, canonical)
+        level_field, values = _observed_level_field_and_variants(discovery, canonical)
         if len(values) < 2:
             return match.group(0)
 
         expanded[canonical] = values
         quoted = ", ".join(json.dumps(level) for level in values)
-        return f"level:in({quoted})"
+        return f"{level_field}:in({quoted})"
 
     query = group_pattern.sub(replace_group, query)
     query = pattern.sub(replace, query)
@@ -432,8 +438,16 @@ def _unquote_level_filter_value(value: str) -> str:
     return value.strip().strip('"').strip("'")
 
 
-def _observed_level_variants(discovery: dict[str, Any], canonical: str) -> list[str]:
-    levels = discovery.get("field_values", {}).get("level", [])
+def _observed_level_field_and_variants(discovery: dict[str, Any], canonical: str) -> tuple[str, list[str]]:
+    field_values = discovery.get("field_values", {})
+    for field in ("level", "severity_text", "severity"):
+        values = _level_variants_for_field(field_values.get(field, []), canonical)
+        if values:
+            return field, values
+    return "level", []
+
+
+def _level_variants_for_field(levels: list[Any], canonical: str) -> list[str]:
     values: list[str] = []
     seen: set[str] = set()
     for item in levels:

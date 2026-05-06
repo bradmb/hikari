@@ -202,6 +202,28 @@ def test_ai_expands_grouped_level_filters_to_observed_variants():
     assert result["query"] == '_time:15m service:"billing-api" level:in("error", "ERROR")'
 
 
+def test_ai_expands_level_filter_to_observed_severity_text_field():
+    parsed = {
+        "query": '_time:15m service:"billing-api" level:error',
+        "explanation": "Finds Billing API errors.",
+        "evidence": [],
+    }
+    discovery = {
+        "field_values": {
+            "level": [],
+            "severity_text": [
+                {"value": "Error", "hits": 10},
+                {"value": "Fatal", "hits": 2},
+                {"value": "Information", "hits": 3},
+            ],
+        }
+    }
+
+    result = ai._apply_observed_query_expansions(parsed, discovery, "why is Billing API failing?")
+
+    assert result["query"] == '_time:15m service:"billing-api" severity_text:in("Error", "Fatal")'
+
+
 def test_ai_uses_requested_level_when_model_mixes_warning_with_errors():
     parsed = {
         "query": '_time:15m service:"billing-api" level:(error OR ERROR OR warn OR WARNING)',

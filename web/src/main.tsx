@@ -1221,16 +1221,17 @@ function App() {
 
   async function runSearch(
     nextQuery = draftQuery,
-    options: { relaxIfEmpty?: boolean; replaceUrl?: boolean; filters?: AppliedFilter[]; window?: QueryWindow } = {}
+    options: { relaxIfEmpty?: boolean; replaceUrl?: boolean; filters?: AppliedFilter[]; window?: QueryWindow; limit?: number } = {}
   ) {
     setLoading(true);
     setError("");
     try {
       const activeWindow = options.window ?? timeWindow;
       const activeFilters = options.filters ?? appliedFilters;
+      const activeLimit = options.limit ?? 500;
       let activeQuery = nextQuery;
       let backendQuery = queryWithExpandedFilters(activeQuery, activeFilters);
-      let searchResult = await searchLogs(backendQuery, 500, activeWindow);
+      let searchResult = await searchLogs(backendQuery, activeLimit, activeWindow);
       let activeHitStepMs = histogramStepMs(activeQuery, activeWindow);
       let activeHitRange = timeRangeForQuery(activeQuery, activeWindow);
       const relaxations: string[] = [];
@@ -1244,7 +1245,7 @@ function App() {
           backendQuery = queryWithExpandedFilters(activeQuery, activeFilters);
           activeHitStepMs = histogramStepMs(activeQuery, activeWindow);
           activeHitRange = timeRangeForQuery(activeQuery, activeWindow);
-          searchResult = await searchLogs(backendQuery, 500, activeWindow);
+          searchResult = await searchLogs(backendQuery, activeLimit, activeWindow);
           attempts += 1;
         }
       }
@@ -1394,7 +1395,7 @@ function App() {
       }, 220);
       if (!startedFromExplore) setMode("answer");
       setAppliedFilters([]);
-      void runSearch(result.query, { relaxIfEmpty: true, filters: [] });
+      void runSearch(result.query, { filters: [], limit: 2000 });
     } catch (err) {
       window.clearInterval(timer);
       const message = err instanceof Error ? err.message : "AI query generation failed";
