@@ -1221,6 +1221,7 @@ time {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .drawer-head button:hover,
@@ -1236,6 +1237,10 @@ time {
   gap: 6px;
   font-size: 12px;
   font-weight: 600;
+  grid-auto-flow: column;
+  grid-auto-columns: max-content;
+  white-space: nowrap;
+  line-height: 1;
 }
 
 .drawer-head button span {
