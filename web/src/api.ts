@@ -18,6 +18,11 @@ export type AiStep = {
   items?: string[];
 };
 
+export type QueryWindow = {
+  start?: string | null;
+  end?: string | null;
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -34,27 +39,40 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export function searchLogs(query: string, limit = 500) {
+function windowPayload(window?: QueryWindow) {
+  return {
+    ...(window?.start ? { start: window.start } : {}),
+    ...(window?.end ? { end: window.end } : {})
+  };
+}
+
+function windowParams(params: URLSearchParams, window?: QueryWindow) {
+  if (window?.start) params.set("start", window.start);
+  if (window?.end) params.set("end", window.end);
+  return params;
+}
+
+export function searchLogs(query: string, limit = 500, window?: QueryWindow) {
   return request<SearchResponse>("/api/search", {
     method: "POST",
-    body: JSON.stringify({ query, limit })
+    body: JSON.stringify({ query, limit, ...windowPayload(window) })
   });
 }
 
-export function getHits(query: string, step = "1m") {
+export function getHits(query: string, step = "1m", window?: QueryWindow) {
   return request<{ values?: Array<Record<string, unknown>> }>("/api/hits", {
     method: "POST",
-    body: JSON.stringify({ query, step })
+    body: JSON.stringify({ query, step, ...windowPayload(window) })
   });
 }
 
-export function getFields(query: string) {
-  const params = new URLSearchParams({ query });
+export function getFields(query: string, window?: QueryWindow) {
+  const params = windowParams(new URLSearchParams({ query }), window);
   return request<{ values?: ValueHit[] }>(`/api/fields?${params.toString()}`);
 }
 
-export function getFieldValues(query: string, field: string) {
-  const params = new URLSearchParams({ query, field, limit: "25" });
+export function getFieldValues(query: string, field: string, window?: QueryWindow) {
+  const params = windowParams(new URLSearchParams({ query, field, limit: "25" }), window);
   return request<{ values?: ValueHit[] }>(`/api/field-values?${params.toString()}`);
 }
 

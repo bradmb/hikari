@@ -15,7 +15,7 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { generateQuery, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiStep, type LogRow, type ValueHit } from "./api";
+import { generateQuery, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiStep, type LogRow, type QueryWindow, type ValueHit } from "./api";
 import "./styles.css";
 
 const defaultFields = [
@@ -135,6 +135,8 @@ type ViewMode = "welcome" | "answer" | "explore";
 const defaultLogQuery = "_time:15m";
 const logQueryParam = "q";
 const facetParam = "facet";
+const startParam = "start";
+const endParam = "end";
 const selectedEventParam = "event";
 const selectedEventStoragePrefix = "hikari:selected-event:";
 
@@ -148,6 +150,24 @@ function selectedEventIdFromUrl(): string | null {
 
 function logQueryFromUrl(): string {
   return new URLSearchParams(window.location.search).get(logQueryParam)?.trim() || defaultLogQuery;
+}
+
+function cleanTimeParam(value: string | null): string | null {
+  if (!value) return null;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? null : new Date(timestamp).toISOString();
+}
+
+function timeWindowFromUrl(): QueryWindow {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    start: cleanTimeParam(params.get(startParam)),
+    end: cleanTimeParam(params.get(endParam))
+  };
+}
+
+function hasTimeWindow(window: QueryWindow): boolean {
+  return Boolean(window.start && window.end);
 }
 
 function serializeFacet(filter: Pick<AppliedFilter, "field" | "value">): string {
@@ -178,9 +198,10 @@ function facetsFromUrl(): AppliedFilter[] {
 function logStateFromUrl() {
   const urlQuery = logQueryFromUrl();
   const urlFacets = facetsFromUrl();
-  if (urlFacets.length === 0) return { query: urlQuery, filters: [] as AppliedFilter[] };
+  const window = timeWindowFromUrl();
+  if (urlFacets.length === 0) return { query: urlQuery, filters: [] as AppliedFilter[], window };
   const next = buildQueryWithFilters(urlQuery, [], urlFacets);
-  return { query: next.query, filters: next.filters };
+  return { query: next.query, filters: next.filters, window };
 }
 
 function stableLogJson(row: LogRow): string {
@@ -238,7 +259,8 @@ function buildAppUrl(
   mode: ViewMode,
   eventId?: string | null,
   logQuery?: string | null,
-  filters: Pick<AppliedFilter, "field" | "value">[] = []
+  filters: Pick<AppliedFilter, "field" | "value">[] = [],
+  queryWindow: QueryWindow = {}
 ): string {
   const params = new URLSearchParams(window.location.search);
   const cleanQuery = (logQuery ?? params.get(logQueryParam) ?? "").trim();
@@ -252,6 +274,12 @@ function buildAppUrl(
     filters.forEach((filter) => {
       if (filter.field.trim() && filter.value.trim()) params.append(facetParam, serializeFacet(filter));
     });
+  }
+  params.delete(startParam);
+  params.delete(endParam);
+  if (mode === "explore" && queryWindow.start && queryWindow.end) {
+    params.set(startParam, queryWindow.start);
+    params.set(endParam, queryWindow.end);
   }
   if (mode === "explore" && eventId) {
     params.set(selectedEventParam, eventId);
@@ -440,6 +468,18 @@ function localTimeValue(row: LogRow): string {
   const month = date.toLocaleString(undefined, { month: "short" });
   const day = date.getDate();
   return `${month} ${day}  ${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())}`;
+}
+
+function formatChartTime(timestamp: number): string {
+  return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+function formatTimeWindow(window: QueryWindow): string {
+  if (!window.start || !window.end) return "";
+  const start = Date.parse(window.start);
+  const end = Date.parse(window.end);
+  if (Number.isNaN(start) || Number.isNaN(end)) return "";
+  return `${formatChartTime(start)} to ${formatChartTime(end)}`;
 }
 
 function rowTimestamp(row: LogRow): number {
@@ -865,6 +905,7 @@ function App() {
   const initialLogState = logStateFromUrl();
   const [query, setQuery] = useState(initialLogState.query);
   const [draftQuery, setDraftQuery] = useState(initialLogState.query);
+  const [timeWindow, setTimeWindow] = useState<QueryWindow>(initialLogState.window);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiExplanation, setAiExplanation] = useState("");
   const [aiEvidence, setAiEvidence] = useState<string[]>([]);
@@ -887,6 +928,9 @@ function App() {
   const [live, setLive] = useState(false);
   const [liveStatus, setLiveStatus] = useState<"off" | "connecting" | "streaming" | "reconnecting" | "error">("off");
   const [mode, setMode] = useState<ViewMode>(() => modeFromPath(window.location.pathname));
+  const [hoveredBucket, setHoveredBucket] = useState<number | null>(null);
+  const [dragRange, setDragRange] = useState<{ anchor: number; cursor: number } | null>(null);
+  const histogramRef = useRef<HTMLElement | null>(null);
   const tailRef = useRef<EventSource | null>(null);
   const aiCloseTimerRef = useRef<number | null>(null);
   const manualValueRef = useRef<HTMLInputElement | null>(null);
@@ -901,10 +945,11 @@ function App() {
     eventId?: string | null,
     replace = false,
     nextQuery = query,
-    nextFilters = appliedFilters
+    nextFilters = appliedFilters,
+    nextWindow = timeWindow
   ) {
     if (!["/", "/browse"].includes(window.location.pathname)) return;
-    const next = buildAppUrl(nextMode, eventId, nextQuery, nextFilters);
+    const next = buildAppUrl(nextMode, eventId, nextQuery, nextFilters, nextWindow);
     const current = `${window.location.pathname}${window.location.search}`;
     if (current === next) return;
     window.history[replace ? "replaceState" : "pushState"]({}, "", next);
@@ -942,10 +987,11 @@ function App() {
       setMode(nextMode);
       setQuery(nextState.query);
       setDraftQuery(nextState.query);
+      setTimeWindow(nextState.window);
       setAppliedFilters(nextMode === "explore" ? nextState.filters : []);
       if (nextMode === "explore") {
         restoreSelectedLogEvent();
-        void runSearch(nextState.query, { replaceUrl: true, filters: nextState.filters });
+        void runSearch(nextState.query, { replaceUrl: true, filters: nextState.filters, window: nextState.window });
       } else {
         selectedEventIdRef.current = null;
         setSelected(null);
@@ -961,16 +1007,21 @@ function App() {
       selectedEventIdRef.current = null;
       if (selected) setSelected(null);
       if (appliedFilters.length > 0) setAppliedFilters([]);
+      if (hasTimeWindow(timeWindow)) setTimeWindow({});
     }
     updateAppUrl(mode, mode === "explore" ? selectedEventIdRef.current : null);
   }, [mode, selected]);
 
-  async function runSearch(nextQuery = draftQuery, options: { relaxIfEmpty?: boolean; replaceUrl?: boolean; filters?: AppliedFilter[] } = {}) {
+  async function runSearch(
+    nextQuery = draftQuery,
+    options: { relaxIfEmpty?: boolean; replaceUrl?: boolean; filters?: AppliedFilter[]; window?: QueryWindow } = {}
+  ) {
     setLoading(true);
     setError("");
     try {
+      const activeWindow = options.window ?? timeWindow;
       let activeQuery = nextQuery;
-      let searchResult = await searchLogs(activeQuery);
+      let searchResult = await searchLogs(activeQuery, 500, activeWindow);
       const relaxations: string[] = [];
       if (options.relaxIfEmpty) {
         let attempts = 0;
@@ -979,13 +1030,13 @@ function App() {
           if (!relaxed || relaxed === activeQuery) break;
           relaxations.push(relaxed);
           activeQuery = relaxed;
-          searchResult = await searchLogs(activeQuery);
+          searchResult = await searchLogs(activeQuery, 500, activeWindow);
           attempts += 1;
         }
       }
       const [hitResult, fieldResult] = await Promise.all([
-        getHits(activeQuery),
-        getFields(activeQuery)
+        getHits(activeQuery, "1m", activeWindow),
+        getFields(activeQuery, activeWindow)
       ]);
       const nextRows = searchResult.rows.length ? searchResult.rows : [];
       setRows(nextRows);
@@ -997,9 +1048,10 @@ function App() {
         setSelected(null);
       }
       setQuery(activeQuery);
+      setTimeWindow(activeWindow);
       if (relaxations.length === 0) setDraftQuery(activeQuery);
       if (mode === "explore") {
-        updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery, options.filters ?? appliedFilters);
+        updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery, options.filters ?? appliedFilters, activeWindow);
       }
       setAiRelaxations(relaxations);
       setHits(hitResult.values ?? []);
@@ -1020,7 +1072,7 @@ function App() {
   async function loadFacet(field: string) {
     try {
       const fieldsToLoad = aliasFieldsForFilter(field);
-      const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(query, sourceField)));
+      const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(query, sourceField, timeWindow)));
       const nextValues = mergeFacetValues(field, ...results.map((result) => result.values));
       setFacets((current) => ({
         ...current,
@@ -1177,7 +1229,7 @@ function App() {
   }
 
   useEffect(() => {
-    void runSearch(initialLogState.query, { replaceUrl: true, filters: initialLogState.filters });
+    void runSearch(initialLogState.query, { replaceUrl: true, filters: initialLogState.filters, window: initialLogState.window });
   }, []);
 
   useEffect(() => {
@@ -1192,9 +1244,9 @@ function App() {
 
   useEffect(() => {
     priorityFilters.forEach(({ field }) => {
-      if (!facets[field]) void loadFacet(field);
+      void loadFacet(field);
     });
-  }, [query]);
+  }, [query, timeWindow]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1206,7 +1258,7 @@ function App() {
 
   useEffect(() => {
     tailRef.current?.close();
-    const shouldStream = live || mode === "welcome";
+    const shouldStream = !hasTimeWindow(timeWindow) && (live || mode === "welcome");
     if (!shouldStream) {
       setLiveStatus("off");
       return;
@@ -1228,14 +1280,16 @@ function App() {
       source.close();
       setLiveStatus("off");
     };
-  }, [live, query, mode]);
+  }, [live, query, mode, timeWindow]);
 
   const histogram = useMemo(() => {
     const buckets = 60;
     const times = rows.map(rowTimestamp).filter((value) => !Number.isNaN(value));
     if (times.length === 0) return [];
-    const minTime = Math.min(...times);
-    const maxTime = Math.max(...times);
+    const windowStart = timeWindow.start ? Date.parse(timeWindow.start) : NaN;
+    const windowEnd = timeWindow.end ? Date.parse(timeWindow.end) : NaN;
+    const minTime = !Number.isNaN(windowStart) && !Number.isNaN(windowEnd) ? windowStart : Math.min(...times);
+    const maxTime = !Number.isNaN(windowStart) && !Number.isNaN(windowEnd) ? windowEnd : Math.max(...times);
     const span = Math.max(1000, maxTime - minTime);
     const step = span / buckets;
     const counts: Array<{ error: number; warning: number; info: number; other: number }> = Array.from(
@@ -1261,13 +1315,55 @@ function App() {
         key: i,
         total,
         height,
+        startTime: minTime + i * step,
+        endTime: minTime + (i + 1) * step,
         error: total ? (c.error / total) * 100 : 0,
         warning: total ? (c.warning / total) * 100 : 0,
         info: total ? (c.info / total) * 100 : 0,
-        other: total ? (c.other / total) * 100 : 0
+        other: total ? (c.other / total) * 100 : 0,
+        label: `${total} logs from ${formatChartTime(minTime + i * step)} to ${formatChartTime(minTime + (i + 1) * step)}`
       };
     });
-  }, [rows]);
+  }, [rows, timeWindow]);
+
+  const selectedHistogramRange = dragRange && histogram.length
+    ? {
+        start: Math.min(dragRange.anchor, dragRange.cursor),
+        end: Math.max(dragRange.anchor, dragRange.cursor)
+      }
+    : null;
+
+  function bucketIndexFromClientX(clientX: number): number | null {
+    const element = histogramRef.current;
+    if (!element || histogram.length === 0) return null;
+    const rect = element.getBoundingClientRect();
+    const ratio = (clientX - rect.left) / Math.max(1, rect.width);
+    return Math.min(histogram.length - 1, Math.max(0, Math.floor(ratio * histogram.length)));
+  }
+
+  function updateHoveredBucket(clientX: number) {
+    const index = bucketIndexFromClientX(clientX);
+    if (index !== null) setHoveredBucket(index);
+    return index;
+  }
+
+  function applyHistogramRange(startIndex: number, endIndex: number) {
+    const start = histogram[Math.min(startIndex, endIndex)];
+    const end = histogram[Math.max(startIndex, endIndex)];
+    if (!start || !end) return;
+    const nextWindow = {
+      start: new Date(start.startTime).toISOString(),
+      end: new Date(end.endTime).toISOString()
+    };
+    setTimeWindow(nextWindow);
+    setLive(false);
+    void runSearch(draftQuery, { window: nextWindow, filters: appliedFilters });
+  }
+
+  function clearTimeWindow() {
+    setTimeWindow({});
+    void runSearch(draftQuery, { window: {}, filters: appliedFilters });
+  }
 
   const logColumns = useMemo(() => {
     function valueCount(getValue: (row: LogRow) => string): number {
@@ -1544,8 +1640,8 @@ function App() {
           )}
           <button className="time-button" title="Time range">
             <Clock size={15} />
-            <strong>15m</strong>
-            <span>Past 15 Minutes</span>
+            <strong>{hasTimeWindow(timeWindow) ? "range" : "15m"}</strong>
+            <span>{hasTimeWindow(timeWindow) ? formatTimeWindow(timeWindow) : "Past 15 Minutes"}</span>
           </button>
           <button className="icon-button" onClick={() => setLive((current) => !current)} title={live ? "Pause live tail" : "Start live tail"}>
             {live ? <Pause size={16} /> : <Play size={16} />}
@@ -1570,8 +1666,14 @@ function App() {
           />
           <button className="add-button" onClick={runDraftQuery}>Add</button>
         </div>
-        {appliedFilters.length > 0 && (
+        {(appliedFilters.length > 0 || hasTimeWindow(timeWindow)) && (
           <div className="active-filters query-active-filters" aria-label="Active filters">
+            {hasTimeWindow(timeWindow) && (
+              <button onClick={clearTimeWindow}>
+                <X size={12} />
+                <span>time:{formatTimeWindow(timeWindow)}</span>
+              </button>
+            )}
             {appliedFilters.map((filter) => (
               <button key={`${filter.field}:${filter.value}`} onClick={() => removeFilter(filter)}>
                 <X size={12} />
@@ -1687,15 +1789,52 @@ function App() {
         )}
         {error && <div className="error-banner">{error}</div>}
 
-        <section className="histogram" aria-label="Log volume histogram">
+        <section
+          className={`histogram ${dragRange ? "selecting" : ""}`}
+          aria-label="Log volume histogram"
+          ref={histogramRef}
+          onPointerDown={(event) => {
+            const index = updateHoveredBucket(event.clientX);
+            if (index === null) return;
+            event.currentTarget.setPointerCapture(event.pointerId);
+            setDragRange({ anchor: index, cursor: index });
+          }}
+          onPointerMove={(event) => {
+            const index = updateHoveredBucket(event.clientX);
+            if (index !== null && dragRange) setDragRange((current) => current ? { ...current, cursor: index } : current);
+          }}
+          onPointerUp={(event) => {
+            const index = updateHoveredBucket(event.clientX);
+            if (dragRange && index !== null) applyHistogramRange(dragRange.anchor, index);
+            setDragRange(null);
+          }}
+          onPointerLeave={() => {
+            if (!dragRange) setHoveredBucket(null);
+          }}
+        >
+          {selectedHistogramRange && (
+            <span
+              className="histogram-selection"
+              style={{
+                left: `${(selectedHistogramRange.start / histogram.length) * 100}%`,
+                width: `${((selectedHistogramRange.end - selectedHistogramRange.start + 1) / histogram.length) * 100}%`
+              }}
+            />
+          )}
           {histogram.map((bar) => (
-            <span key={bar.key} className="hbar" style={{ height: `${bar.height}px` }} title={`${bar.total} logs`}>
+            <span key={bar.key} className={`hbar ${hoveredBucket === bar.key ? "hovered" : ""}`} style={{ height: `${bar.height}px` }} title={bar.label}>
               {bar.error > 0 && <i className="seg error" style={{ flexBasis: `${bar.error}%` }} />}
               {bar.warning > 0 && <i className="seg warning" style={{ flexBasis: `${bar.warning}%` }} />}
               {bar.info > 0 && <i className="seg info" style={{ flexBasis: `${bar.info}%` }} />}
               {bar.other > 0 && <i className="seg other" style={{ flexBasis: `${bar.other}%` }} />}
             </span>
           ))}
+          {hoveredBucket !== null && histogram[hoveredBucket] && (
+            <div className="histogram-tooltip" style={{ left: `${((hoveredBucket + 0.5) / histogram.length) * 100}%` }}>
+              <strong>{histogram[hoveredBucket].total} logs</strong>
+              <span>{formatChartTime(histogram[hoveredBucket].startTime)} - {formatChartTime(histogram[hoveredBucket].endTime)}</span>
+            </div>
+          )}
         </section>
 
         <section className="log-table" style={logColumns.style}>

@@ -824,6 +824,9 @@ summary svg {
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   position: relative;
+  cursor: crosshair;
+  user-select: none;
+  touch-action: none;
 }
 
 .histogram::after {
@@ -845,11 +848,55 @@ summary svg {
   border-radius: 0;
   overflow: hidden;
   transition: filter 140ms ease, transform 140ms ease;
+  position: relative;
+  z-index: 1;
 }
 
-.hbar:hover {
+.hbar:hover,
+.hbar.hovered {
   filter: brightness(1.35) saturate(1.15);
   transform: translateY(-1px);
+}
+
+.histogram.selecting .hbar {
+  filter: saturate(0.65) brightness(0.82);
+}
+
+.histogram-selection {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  z-index: 0;
+  background: rgba(231, 233, 238, 0.24);
+  border-left: 1px solid rgba(231, 233, 238, 0.8);
+  border-right: 1px solid rgba(231, 233, 238, 0.8);
+  pointer-events: none;
+}
+
+.histogram-tooltip {
+  position: absolute;
+  bottom: 100%;
+  z-index: 3;
+  display: grid;
+  gap: 2px;
+  min-width: 132px;
+  padding: 7px 9px;
+  color: var(--text);
+  background: #101218;
+  border: 1px solid var(--border);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  transform: translate(-50%, -6px);
+  pointer-events: none;
+}
+
+.histogram-tooltip strong {
+  font-size: 12px;
+}
+
+.histogram-tooltip span {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
 }
 
 .hbar .seg {
