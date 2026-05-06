@@ -422,8 +422,7 @@ function firstFieldValue(row: LogRow, fields: string[]): string {
   return "";
 }
 
-function parsedLogPayload(row: LogRow): Record<string, unknown> | null {
-  const raw = asText(row._msg ?? row.log);
+function parseJsonPayload(raw: string): Record<string, unknown> | null {
   if (!raw || !raw.startsWith("{")) return null;
   try {
     const parsed = JSON.parse(raw);
@@ -435,15 +434,21 @@ function parsedLogPayload(row: LogRow): Record<string, unknown> | null {
   }
 }
 
+function messageFromPayload(payload: Record<string, unknown> | null): string {
+  if (!payload) return "";
+  return asText(payload.msg ?? payload.message ?? payload.Message ?? payload.State ?? payload.state ?? payload.event);
+}
+
 function message(row: LogRow): string {
-  const direct = asText(row.message ?? row.msg);
-  if (direct) return direct;
-  const payload = parsedLogPayload(row);
-  if (payload) {
-    const nested = asText(payload.msg ?? payload.message ?? payload.Message ?? payload.State ?? payload.state ?? payload.event);
+  const candidates = [row.message, row.msg, row._msg, row.log];
+  for (const candidate of candidates) {
+    const raw = asText(candidate);
+    if (!raw) continue;
+    const nested = messageFromPayload(parseJsonPayload(raw));
     if (nested) return nested;
+    return raw;
   }
-  return asText(row._msg ?? row.log);
+  return "";
 }
 
 function timeValue(row: LogRow): string {
