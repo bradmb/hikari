@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hikari - Open source log intelligence</title>
+    <meta
+      name="description"
+      content="Hikari is an open source log investigation interface for VictoriaLogs with natural-language search, facets, and MCP tools."
+    >
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <link rel="stylesheet" href="./styles.css">
+    <script src="./logs.js" defer></script>
+  </head>
+  <body>
+    <div class="page-shell">
+      <header class="site-chrome">
+        <a class="product" href="#" aria-label="Hikari home">
+          <span class="mark" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 32 32" focusable="false">
+              <defs>
+                <linearGradient id="hikari-mark" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#5fe1ff" />
+                  <stop offset="55%" stop-color="#b277ff" />
+                  <stop offset="100%" stop-color="#ff5fc8" />
+                </linearGradient>
+              </defs>
+              <path
+                d="M16 2 C17 11 21 15 30 16 C21 17 17 21 16 30 C15 21 11 17 2 16 C11 15 15 11 16 2 Z"
+                fill="url(#hikari-mark)"
+              />
+              <path
+                d="M16 9 C16.5 13.5 18.5 15.5 23 16 C18.5 16.5 16.5 18.5 16 23 C15.5 18.5 13.5 16.5 9 16 C13.5 15.5 15.5 13.5 16 9 Z"
+                fill="rgba(255,255,255,0.85)"
+              />
+            </svg>
+          </span>
+          <span>
+            <strong>Hikari</strong>
+            <small>Open source log intelligence</small>
+          </span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <a href="#why">Why Hikari</a>
+          <a href="./mcp.html">Documentation</a>
+          <a href="./installation.html">Installation</a>
+          <a class="nav-cta" href="https://github.com/bradmb/hikari">GitHub</a>
+        </nav>
+      </header>
+
+      <main>
+        <section class="hero" aria-labelledby="hero-title">
+          <div class="log-crawl" aria-hidden="true">
+            <div class="log-track">
+              <div class="tail-row sev-info">
+                <span>12:41:03</span><b>hikari-api</b><em>GET /api/facets returned service buckets in 42ms</em>
+              </div>
+              <div class="tail-row sev-info">
+                <span>12:41:04</span><b>collector</b><em>accepted 500 events from namespace edge-staging</em>
+              </div>
+              <div class="tail-row sev-warning">
+                <span>12:41:05</span><b>payments</b><em>retrying request after upstream timeout client=demo-shop</em>
+              </div>
+              <div class="tail-row sev-error">
+                <span>12:41:06</span><b>auth-service</b><em>login failed reason=invalid_token pod=auth-7cbfcdb8f9</em>
+              </div>
+              <div class="tail-row sev-info">
+                <span>12:41:07</span><b>mcp-server</b><em>tool=query_logs query="_time:15m level:error" rows=83</em>
+              </div>
+              <div class="tail-row sev-debug">
+                <span>12:41:08</span><b>router</b><em>matched route=/orders/:id latency_ms=18 host=node-a.internal.example</em>
+              </div>
+              <div class="tail-row sev-warning">
+                <span>12:41:09</span><b>worker</b><em>queue depth exceeded threshold queue=webhooks depth=188</em>
+              </div>
+              <div class="tail-row sev-error">
+                <span>12:41:10</span><b>api</b><em>database connection refused namespace=checkout-production</em>
+              </div>
+              <div class="tail-row sev-info">
+                <span>12:41:11</span><b>victorialogs</b><em>query completed hits=7512 step=1m cache=warm</em>
+              </div>
+              <div class="tail-row sev-info">
+                <span>12:41:12</span><b>hikari-ai</b><em>generated LogsQL from prompt="summarize checkout errors"</em>
+              </div>
+              <div class="tail-row sev-debug">
+                <span>12:41:13</span><b>ingress</b><em>edge access authenticated service_token=automation status=ok</em>
+              </div>
+              <div class="tail-row sev-info">
+                <span>12:41:14</span><b>kube-system</b><em>node monitor heartbeat node=node-b.internal.example</em>
+              </div>
+              <div class="tail-row sev-error">
+                <span>12:41:15</span><b>billing</b><em>uncaught exception trace_id=01JZHKW8VX3PMD3KBA9</em>
+              </div>
+              <div class="tail-row sev-warning">
+                <span>12:41:16</span><b>scheduler</b><em>job delayed duration=31s reason=rate_limit</em>
+              </div>
+              <div class="tail-row sev-info">
+                <span>12:41:17</span><b>hikari-ui</b><em>facet selection namespace=edge-staging level=error</em>
+              </div>
+              <div class="tail-row sev-info">
+                <span>12:41:18</span><b>hikari-mcp</b><em>summarize_window returned service hostname level namespace pod</em>
+              </div>
+              <div class="tail-row sev-warning">
+                <span>12:41:19</span><b>orders-api</b><em>slow request method=POST path=/orders latency_ms=1432</em>
+              </div>
+              <div class="tail-row sev-error">
+                <span>12:41:20</span><b>auth-service</b><em>token introspection failed issuer=legacy-auth status=503</em>
+              </div>
+              <div class="tail-row sev-info">
+                <span>12:41:21</span><b>hikari-api</b><em>natural-language query mapped to observed service auth-service</em>
+              </div>
+              <div class="tail-row sev-debug">
+                <span>12:41:22</span><b>collector</b><em>batch flushed bytes=82011 rows=500 duration_ms=66</em>
+              </div>
+            </div>
+          </div>
+
+          <div class="hero-copy">
+            <p class="eyebrow">Open source observability UI</p>
+            <h1 id="hero-title">Hikari</h1>
+            <p class="hero-subtitle">Shine a light on your logs.</p>
+            <p class="hero-text">
+              Query VictoriaLogs with a focused interface, natural-language search, and MCP tools built for agents that need real operational context.
+            </p>
+            <div class="hero-actions">
+              <a class="button primary" href="https://github.com/bradmb/hikari">View on GitHub</a>
+              <a class="button secondary" href="./mcp.html">Explore MCP docs</a>
+            </div>
+          </div>
+        </section>
+
+        <section id="why" class="content-band" aria-labelledby="why-title">
+          <div class="section-copy">
+            <p class="eyebrow">Built for investigations</p>
+            <h2 id="why-title">Readable logs, discoverable fields, bounded queries.</h2>
+          </div>
+          <div class="feature-grid">
+            <article>
+              <h3>Search by intent</h3>
+              <p>Turn plain English into LogsQL with evidence, field discovery, and the exact query used.</p>
+            </article>
+            <article>
+              <h3>Keep the UI close to the data</h3>
+              <p>Facet by service, hostname, level, namespace, and pod before narrowing into raw events.</p>
+            </article>
+            <article>
+              <h3>Agent-ready from day one</h3>
+              <p>Expose the same investigation flow to MCP clients through tools for search, facets, hits, and summaries.</p>
+            </article>
+          </div>
+        </section>
+
+        <section id="mcp" class="mcp-band" aria-labelledby="mcp-title">
+          <div class="section-copy">
+            <p class="eyebrow">MCP endpoint</p>
+            <h2 id="mcp-title">Give AI tools a controlled way to query logs.</h2>
+            <p>
+              Hikari ships MCP tools for window summaries, raw LogsQL, AI-assisted search, field discovery, facets, hit counts, and bounded live-tail samples.
+            </p>
+          </div>
+          <pre class="code-sample"><code>https://logs.example.com/mcp
+
+tools/list
+  get_instructions
+  summarize_window
+  query_logs
+  ai_search
+  get_facets</code></pre>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,425 @@
+from __future__ import annotations
+
+import json
+
+import httpx
+import pytest
+from fastapi.testclient import TestClient
+from httpx import ASGITransport
+from mcp import ClientSession
+from mcp.client.streamable_http import streamable_http_client
+
+from hikari_api import ai
+from hikari_api import hikari_mcp
+from hikari_api.main import app
+from hikari_api.models import AiQueryRequest, AiQueryResponse
+from hikari_api.settings import Settings, get_settings
+
+
+class FakeVictoriaLogsClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def query(self, path: str, data: dict):
+        self.calls.append((path, data))
+        if path == "/select/logsql/query":
+            return {"rows": [{"_time": "2026-05-01T18:00:00Z", "_msg": "hello", "service": "api"}]}
+        if path == "/select/logsql/hits":
+            return {"values": [{"timestamp": "2026-05-01T18:00:00Z", "hits": 4}]}
+        if path == "/select/logsql/facets":
+            return {"facets": [{"field": "service", "values": [{"value": "api", "hits": 2}]}]}
+        if path == "/select/logsql/field_values":
+            return {"values": [{"value": "api", "hits": 2}]}
+        if path == "/select/logsql/field_names":
+            return {"values": [{"value": "service", "hits": 2}]}
+        return {}
+
+    async def stream(self, path: str, data: dict):
+        if False:
+            yield ""
+        raise RuntimeError("tail failed")
+
+
+def override_client() -> FakeVictoriaLogsClient:
+    return FakeVictoriaLogsClient()
+
+
+def override_settings() -> Settings:
+    return Settings(
+        HIKARI_VICTORIA_URL="http://victorialogs",
+        HIKARI_DEFAULT_QUERY="_time:15m",
+        HIKARI_DEFAULT_FIELDS="service,level",
+        OPENAI_API_KEY="test-key",
+    )
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+@pytest.fixture(autouse=True)
+def overrides():
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_client
+    app.dependency_overrides[get_settings] = override_settings
+    yield
+    app.dependency_overrides.clear()
+
+
+def test_search_proxies_query_endpoint():
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
+    assert response.status_code == 200
+    assert response.json()["rows"][0]["service"] == "api"
+
+
+def test_hits_facets_and_field_values():
+    with TestClient(app) as test_client:
+        hits = test_client.post("/api/hits", json={"query": "_time:15m", "step": "1m"})
+        facets = test_client.post("/api/facets", json={"query": "_time:15m", "fields": ["service"]})
+        values = test_client.get("/api/field-values", params={"query": "_time:15m", "field": "service"})
+    assert hits.json()["values"][0]["hits"] == 4
+    assert facets.json()["facets"][0]["field"] == "service"
+    assert values.json()["values"][0]["value"] == "api"
+
+
+def test_tail_errors_are_streamed_as_sse_error_events():
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/tail", params={"query": "_time:5m"})
+    assert "event: error" in response.text
+    assert "tail failed" in response.text
+
+
+def test_parse_victorialogs_json_lines_response():
+    response = httpx.Response(
+        200,
+        content=b'{"_msg":"first"}\n{"_msg":"second"}\n',
+        headers={"content-type": "application/stream+json"},
+    )
+    from hikari_api.victorialogs import _parse_response
+
+    parsed = _parse_response(response)
+    assert parsed["rows"] == [{"_msg": "first"}, {"_msg": "second"}]
+
+
+@pytest.mark.anyio
+async def test_ai_query_generation(monkeypatch):
+    async def fake_post(self, url, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json_module.dumps(
+                                    {
+                                        "query": "_time:15m error",
+                                        "explanation": "Finds recent errors.",
+                                        "evidence": ["Observed level value error."],
+                                    }
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+    json_module = json
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    result = await ai.generate_logsql(override_settings(), AiQueryRequest(prompt="recent errors"))
+    assert result.query == "_time:15m error"
+    assert "errors" in result.explanation
+    assert result.evidence == ["Observed level value error."]
+    assert result.steps
+    assert result.steps[-1].title == "Generated and normalized LogsQL"
+
+
+def test_ai_expands_level_filters_to_observed_variants():
+    parsed = {
+        "query": '_time:15m service:"billing-api" level:error',
+        "explanation": "Finds Billing API errors.",
+        "evidence": [],
+    }
+    discovery = {
+        "field_values": {
+            "level": [
+                {"value": "error", "hits": 10},
+                {"value": "ERROR", "hits": 2},
+                {"value": "INFO", "hits": 3},
+            ]
+        }
+    }
+
+    result = ai._apply_observed_query_expansions(parsed, discovery)
+
+    assert result["query"] == '_time:15m service:"billing-api" level:in("error", "ERROR")'
+    assert result["evidence"] == ["Expanded error level filter to observed values: error, ERROR"]
+
+
+def test_ai_dedupes_level_filter_expansions_inside_or_groups():
+    parsed = {
+        "query": '_time:15m service:"billing-api" (level:error OR level:ERROR)',
+        "explanation": "Finds Billing API errors.",
+        "evidence": [],
+    }
+    discovery = {
+        "field_values": {
+            "level": [
+                {"value": "error", "hits": 10},
+                {"value": "ERROR", "hits": 2},
+            ]
+        }
+    }
+
+    result = ai._apply_observed_query_expansions(parsed, discovery)
+
+    assert result["query"] == '_time:15m service:"billing-api" level:in("error", "ERROR")'
+
+
+def test_ai_expands_grouped_level_filters_to_observed_variants():
+    parsed = {
+        "query": '_time:15m service:"billing-api" level:(error OR ERROR)',
+        "explanation": "Finds Billing API errors.",
+        "evidence": [],
+    }
+    discovery = {
+        "field_values": {
+            "level": [
+                {"value": "error", "hits": 10},
+                {"value": "ERROR", "hits": 2},
+            ]
+        }
+    }
+
+    result = ai._apply_observed_query_expansions(parsed, discovery)
+
+    assert result["query"] == '_time:15m service:"billing-api" level:in("error", "ERROR")'
+
+
+def test_ai_uses_requested_level_when_model_mixes_warning_with_errors():
+    parsed = {
+        "query": '_time:15m service:"billing-api" level:(error OR ERROR OR warn OR WARNING)',
+        "explanation": "Finds Billing API errors.",
+        "evidence": [],
+    }
+    discovery = {
+        "field_values": {
+            "level": [
+                {"value": "error", "hits": 10},
+                {"value": "ERROR", "hits": 2},
+                {"value": "warn", "hits": 3},
+                {"value": "WARNING", "hits": 4},
+            ]
+        }
+    }
+
+    result = ai._apply_observed_query_expansions(parsed, discovery, "show me Billing API errors")
+
+    assert result["query"] == '_time:15m service:"billing-api" level:in("error", "ERROR")'
+
+
+def test_ai_prunes_unrequested_level_in_filters():
+    parsed = {
+        "query": '_time:15m (level:in("error", "ERROR") or level:in("WARNING", "warn") or _msg:error)',
+        "explanation": "Finds Billing API errors.",
+        "evidence": [],
+    }
+    discovery = {
+        "field_values": {
+            "level": [
+                {"value": "error", "hits": 10},
+                {"value": "ERROR", "hits": 2},
+                {"value": "warn", "hits": 3},
+                {"value": "WARNING", "hits": 4},
+            ]
+        }
+    }
+
+    result = ai._apply_observed_query_expansions(parsed, discovery, "show me Billing API errors")
+
+    assert result["query"] == '_time:15m (level:in("error", "ERROR") or _msg:error)'
+
+
+class FakeMcpVictoriaLogsClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict]] = []
+
+    async def query(self, path: str, data: dict):
+        self.calls.append((path, data))
+        if path == "/select/logsql/query":
+            return {"rows": [{"_time": "2026-05-01T18:00:00Z", "_msg": "hello", "service": "api"}]}
+        if path == "/select/logsql/field_names":
+            return {"values": [{"value": "service", "hits": 2}]}
+        if path == "/select/logsql/field_values":
+            field = data["field"]
+            values = {
+                "service": [{"value": "api", "hits": 22}],
+                "hostname": [{"value": "node-a.internal.example", "hits": 15}],
+                "host": [{"value": "node-a.internal.example", "hits": 15}],
+                "level": [{"value": "error", "hits": 263}, {"value": "info", "hits": 193}],
+                "kubernetes.pod_namespace": [{"value": "kube-system", "hits": 487}, {"value": "application-staging", "hits": 13}],
+                "kubernetes.pod_name": [{"value": "kube-proxy-zbxp5", "hits": 220}],
+            }
+            return {"values": values.get(field, [{"value": "api", "hits": 2}])}
+        if path == "/select/logsql/hits":
+            return {"values": [{"time": "2026-05-01T18:00:00Z", "hits": 4}]}
+        if path == "/select/logsql/facets":
+            return {"facets": [{"field": "service", "values": [{"value": "api", "hits": 2}]}]}
+        return {}
+
+    async def stream(self, path: str, data: dict):
+        yield json.dumps({"_msg": "tail one", "service": "api"})
+        yield json.dumps({"_msg": "tail two", "service": "api"})
+        yield json.dumps({"_msg": "tail three", "service": "api"})
+
+
+@pytest.mark.anyio
+async def test_mcp_streamable_http_lists_and_calls_query_tool(monkeypatch):
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: FakeMcpVictoriaLogsClient())
+    transport = ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8000") as http_client:
+        async with streamable_http_client(
+            "http://localhost:8000/mcp/",
+            http_client=http_client,
+            terminate_on_close=False,
+        ) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+                tool_names = {tool.name for tool in tools.tools}
+
+                result = await session.call_tool("query_logs", {"query": "_time:15m", "limit": 5})
+
+    assert {
+        "get_instructions",
+        "query_logs",
+        "ai_search",
+        "tail_logs",
+        "get_fields",
+        "get_field_values",
+        "get_hits",
+        "summarize_window",
+        "get_facets",
+    } <= tool_names
+    assert result.structuredContent["query"] == "_time:15m | limit 5"
+    assert result.structuredContent["rows"][0]["service"] == "api"
+
+
+@pytest.mark.anyio
+async def test_mcp_streamable_http_accepts_no_slash_url(monkeypatch):
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: FakeMcpVictoriaLogsClient())
+    transport = ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8000") as http_client:
+        async with streamable_http_client(
+            "http://localhost:8000/mcp",
+            http_client=http_client,
+            terminate_on_close=False,
+        ) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+
+    assert {tool.name for tool in tools.tools} >= {"get_instructions", "query_logs", "summarize_window"}
+
+
+@pytest.mark.anyio
+async def test_mcp_get_instructions_explains_hikari_workflow():
+    result = await hikari_mcp.get_instructions()
+
+    assert result["system"] == "Hikari"
+    assert result["backend"] == "VictoriaLogs"
+    assert "summarize_window" in result["tools"]
+    assert "Service" in result["field_glossary"]
+    assert any("summarize_window" in step for step in result["workflow"])
+
+
+@pytest.mark.anyio
+async def test_mcp_summarize_window_returns_ui_like_facets(monkeypatch):
+    fake = FakeMcpVictoriaLogsClient()
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: fake)
+
+    result = await hikari_mcp.summarize_window("_time:15m", limit=25)
+
+    assert result["buckets"] == [{"time": "2026-05-01T18:00:00Z", "hits": 4}]
+    assert set(result["facets"]) == {"service", "hostname", "level", "namespace", "pod"}
+    assert result["facets"]["service"]["values"][0] == {"value": "api", "hits": 22}
+    assert result["facets"]["level"]["values"][0]["value"] == "error"
+    assert result["facets"]["namespace"]["field"] == "kubernetes.pod_namespace"
+    assert result["facets"]["pod"]["field"] == "kubernetes.pod_name"
+    called_fields = [data["field"] for path, data in fake.calls if path == "/select/logsql/field_values"]
+    assert called_fields == ["service", "hostname", "level", "kubernetes.pod_namespace", "kubernetes.pod_name"]
+
+
+@pytest.mark.anyio
+async def test_mcp_summarize_window_uses_host_when_hostname_is_empty(monkeypatch):
+    class HostFallbackClient(FakeMcpVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            if path == "/select/logsql/field_values" and data["field"] == "hostname":
+                self.calls.append((path, data))
+                return {"values": []}
+            return await super().query(path, data)
+
+    fake = HostFallbackClient()
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: fake)
+
+    result = await hikari_mcp.summarize_window("_time:15m", fields=["hostname"])
+
+    assert result["facets"]["hostname"]["sources"] == ["hostname", "host"]
+    assert result["facets"]["hostname"]["values"][0]["value"] == "node-a.internal.example"
+
+
+@pytest.mark.anyio
+async def test_mcp_get_facets_defaults_to_summary_fields(monkeypatch):
+    fake = FakeMcpVictoriaLogsClient()
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: fake)
+
+    await hikari_mcp.get_facets("_time:15m")
+
+    facets_call = next(data for path, data in fake.calls if path == "/select/logsql/facets")
+    assert facets_call["field"] == ["service", "hostname", "level", "kubernetes.pod_namespace", "kubernetes.pod_name"]
+
+
+@pytest.mark.anyio
+async def test_mcp_get_facets_keeps_explicit_advanced_fields(monkeypatch):
+    fake = FakeMcpVictoriaLogsClient()
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: fake)
+
+    await hikari_mcp.get_facets("_time:15m", fields=["host", "namespace"])
+
+    facets_call = next(data for path, data in fake.calls if path == "/select/logsql/facets")
+    assert facets_call["field"] == ["host", "kubernetes.pod_namespace"]
+
+
+@pytest.mark.anyio
+async def test_mcp_ai_search_generates_and_executes_query(monkeypatch):
+    async def fake_generate_logsql(settings, request, vl=None):
+        return AiQueryResponse(query="_time:15m service:\"api\"", explanation="Finds API logs.", evidence=["service api observed"])
+
+    monkeypatch.setattr(hikari_mcp, "_settings", override_settings)
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: FakeMcpVictoriaLogsClient())
+    monkeypatch.setattr(hikari_mcp, "generate_logsql", fake_generate_logsql)
+
+    result = await hikari_mcp.ai_search("show api logs", limit=3)
+
+    assert result["query"] == '_time:15m service:"api" | limit 3'
+    assert result["explanation"] == "Finds API logs."
+    assert result["evidence"] == ["service api observed"]
+    assert result["rows"][0]["service"] == "api"
+
+
+@pytest.mark.anyio
+async def test_mcp_tail_logs_is_bounded(monkeypatch):
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: FakeMcpVictoriaLogsClient())
+
+    result = await hikari_mcp.tail_logs("_time:5m", duration_seconds=5, max_rows=2)
+
+    assert result["stats"]["count"] == 2
+    assert [row["_msg"] for row in result["rows"]] == ["tail one", "tail two"]

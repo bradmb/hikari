@@ -1,0 +1,55 @@
+replicaCount: 2
+revisionHistoryLimit: 5
+
+nameOverride: hikari
+fullnameOverride: hikari
+
+image:
+  repository: registry.example.com/hikari
+  tag: latest
+  pullPolicy: Always
+
+serviceAccount:
+  name: hikari
+
+deployment:
+  reason: ""
+  timestamp: ""
+  triggeredBy: ""
+
+podAnnotations: {}
+
+env:
+  awsRegion: us-east-1
+  victoriaUrl: http://victorialogs.example.svc:9428
+  openAiSecretId: kubernetes/hikari/openai
+  openAiModel: gpt-5.4-mini
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 512Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  runAsGroup: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  privileged: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop:
+      - ALL
+
+tolerations:
+  - operator: Exists
+    effect: NoSchedule
+
+nodeSelector: {}
+affinity: {}

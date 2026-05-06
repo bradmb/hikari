@@ -1,0 +1,410 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+
+from .ai import generate_logsql
+from .models import AiQueryRequest
+from .settings import Settings, get_settings
+from .victorialogs import VictoriaLogsClient
+
+MAX_QUERY_LIMIT = 1000
+MAX_FIELD_VALUE_LIMIT = 200
+MAX_TAIL_ROWS = 200
+MAX_TAIL_SECONDS = 60
+SUMMARY_FIELDS = {
+    "service": {"field": "service", "label": "Service"},
+    "hostname": {"field": "hostname", "fallback_field": "host", "label": "Hostname"},
+    "level": {"field": "level", "label": "Level"},
+    "namespace": {"field": "kubernetes.pod_namespace", "label": "Namespace"},
+    "pod": {"field": "kubernetes.pod_name", "label": "Pod"},
+}
+
+hikari_mcp = FastMCP(
+    "Hikari",
+    instructions=(
+        "Hikari queries application logs stored in VictoriaLogs. Use field and value discovery before "
+        "writing narrow LogsQL. Use ai_search when the user's request needs natural-language mapping "
+        "to observed services, Kubernetes metadata, clients, environments, levels, or message text."
+    ),
+    streamable_http_path="/",
+    stateless_http=True,
+    json_response=True,
+)
+
+
+def _settings() -> Settings:
+    return get_settings()
+
+
+def _client(settings: Settings | None = None) -> VictoriaLogsClient:
+    return VictoriaLogsClient(settings or _settings())
+
+
+def _bounded(value: int, default: int, maximum: int) -> int:
+    if value <= 0:
+        return default
+    return min(value, maximum)
+
+
+def _query_with_limit(query: str, limit: int) -> str:
+    if "| limit" in query.lower():
+        return query
+    return f"{query} | limit {limit}"
+
+
+def _rows(result: Any) -> list[dict[str, Any]]:
+    rows = result.get("rows", result if isinstance(result, list) else []) if isinstance(result, (dict, list)) else []
+    return [row for row in rows if isinstance(row, dict)]
+
+
+def _values(result: Any) -> list[dict[str, Any]]:
+    raw_values = result.get("values", []) if isinstance(result, dict) else result if isinstance(result, list) else []
+    return [item for item in raw_values if isinstance(item, dict)]
+
+
+def _summary_field_keys(fields: list[str] | None) -> list[str]:
+    if not fields:
+        return list(SUMMARY_FIELDS.keys())
+    keys: list[str] = []
+    for field in fields:
+        normalized = field.strip()
+        match normalized:
+            case "service":
+                keys.append("service")
+            case "host" | "hostname":
+                keys.append("hostname")
+            case "level":
+                keys.append("level")
+            case "namespace" | "kubernetes.pod_namespace":
+                keys.append("namespace")
+            case "pod" | "kubernetes.pod_name":
+                keys.append("pod")
+            case _:
+                keys.append(normalized)
+    return list(dict.fromkeys(keys))
+
+
+def _facet_fields(fields: list[str] | None) -> list[str]:
+    if not fields:
+        return [spec["field"] for spec in SUMMARY_FIELDS.values()]
+    aliases = {
+        "namespace": "kubernetes.pod_namespace",
+        "pod": "kubernetes.pod_name",
+    }
+    return [aliases.get(field.strip(), field.strip()) for field in fields if field.strip()]
+
+
+@hikari_mcp.tool(
+    name="get_instructions",
+    title="Get Instructions",
+    description="Explain what Hikari is, how its log fields map to the UI, and which MCP tools to use.",
+)
+async def get_instructions() -> dict[str, Any]:
+    return {
+        "system": "Hikari",
+        "backend": "VictoriaLogs",
+        "default_query": "_time:15m",
+        "purpose": "Hikari is a log investigation system for querying Kubernetes and application logs.",
+        "workflow": [
+            "Start with summarize_window to understand the current time window.",
+            "Use get_field_values or get_facets to inspect specific dimensions before narrowing a query.",
+            "Use query_logs when you know the LogsQL to run.",
+            "Use ai_search when a human phrase needs to be mapped to observed services, namespaces, pods, levels, or message text.",
+            "Use tail_logs only for a short bounded sample of fresh activity.",
+        ],
+        "field_glossary": {
+            "Service": "The app/service identity, usually the service field.",
+            "Hostname": "The host or node that emitted the log; Hikari checks hostname first and falls back to host.",
+            "Level": "Severity such as error, info, warning, or debug.",
+            "Namespace": "Kubernetes namespace from kubernetes.pod_namespace.",
+            "Pod": "Kubernetes pod name from kubernetes.pod_name.",
+            "Environment": "Deployment environment when present.",
+            "Source": "Log source or emitter when present.",
+            "Time buckets": "Minute-by-minute hit counts for the query window.",
+        },
+        "tools": {
+            "summarize_window": "UI-like overview of time buckets plus Service, Hostname, Level, Namespace, and Pod counts.",
+            "query_logs": "Run bounded raw LogsQL.",
+            "ai_search": "Generate LogsQL from natural language and execute it.",
+            "get_facets": "Return grouped counts for selected fields.",
+            "get_fields": "List available field names.",
+            "get_field_values": "List values for one field.",
+            "get_hits": "Return hit counts over time.",
+            "tail_logs": "Return a bounded live-tail sample.",
+        },
+    }
+
+
+@hikari_mcp.tool(
+    name="query_logs",
+    title="Query Logs",
+    description="Run a bounded VictoriaLogs LogsQL query and return rows plus basic stats.",
+)
+async def query_logs(query: str, limit: int = 100, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    bounded_limit = _bounded(limit, 100, MAX_QUERY_LIMIT)
+    payload = {"query": _query_with_limit(query, bounded_limit), "start": start, "end": end}
+    result = await _client().query("/select/logsql/query", payload)
+    rows = _rows(result)[:bounded_limit]
+    return {"query": payload["query"], "rows": rows, "stats": {"count": len(rows)}}
+
+
+@hikari_mcp.tool(
+    name="ai_search",
+    title="AI Search",
+    description="Generate LogsQL from a natural-language prompt, execute it, and return explanation, evidence, and rows.",
+)
+async def ai_search(
+    prompt: str,
+    current_query: str | None = None,
+    limit: int = 100,
+    fields: list[str] | None = None,
+) -> dict[str, Any]:
+    settings = _settings()
+    vl = _client(settings)
+    generated = await generate_logsql(
+        settings,
+        AiQueryRequest(prompt=prompt, current_query=current_query, fields=fields or []),
+        vl,
+    )
+    bounded_limit = _bounded(limit, 100, MAX_QUERY_LIMIT)
+    result = await vl.query("/select/logsql/query", {"query": _query_with_limit(generated.query, bounded_limit)})
+    rows = _rows(result)[:bounded_limit]
+    return {
+        "query": _query_with_limit(generated.query, bounded_limit),
+        "explanation": generated.explanation,
+        "evidence": generated.evidence,
+        "steps": [step.model_dump() for step in generated.steps],
+        "rows": rows,
+        "stats": {"count": len(rows)},
+    }
+
+
+@hikari_mcp.tool(
+    name="tail_logs",
+    title="Tail Logs",
+    description="Sample the live VictoriaLogs tail for a bounded duration or row count.",
+)
+async def tail_logs(query: str = "_time:5m", duration_seconds: int = 10, max_rows: int = 50) -> dict[str, Any]:
+    bounded_seconds = _bounded(duration_seconds, 10, MAX_TAIL_SECONDS)
+    bounded_rows = _bounded(max_rows, 50, MAX_TAIL_ROWS)
+    rows: list[dict[str, Any]] = []
+
+    try:
+        async with asyncio.timeout(bounded_seconds):
+            async for line in _client().stream("/select/logsql/tail", {"query": query}):
+                try:
+                    parsed = json.loads(line)
+                except json.JSONDecodeError:
+                    parsed = {"_msg": line}
+                if isinstance(parsed, dict):
+                    rows.append(parsed)
+                if len(rows) >= bounded_rows:
+                    break
+    except TimeoutError:
+        pass
+
+    return {"query": query, "rows": rows, "stats": {"count": len(rows), "duration_seconds": bounded_seconds}}
+
+
+@hikari_mcp.tool(
+    name="get_fields",
+    title="Get Fields",
+    description="List VictoriaLogs field names visible for a query window.",
+)
+async def get_fields(query: str = "_time:15m", start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    return await _client().query("/select/logsql/field_names", {"query": query, "start": start, "end": end})
+
+
+@hikari_mcp.tool(
+    name="get_field_values",
+    title="Get Field Values",
+    description="List common values for one VictoriaLogs field within a query window.",
+)
+async def get_field_values(
+    field: str,
+    query: str = "_time:15m",
+    limit: int = 25,
+    start: str | None = None,
+    end: str | None = None,
+    filter: str | None = None,
+) -> dict[str, Any]:
+    bounded_limit = _bounded(limit, 25, MAX_FIELD_VALUE_LIMIT)
+    return await _client().query(
+        "/select/logsql/field_values",
+        {"query": query, "field": field, "limit": bounded_limit, "start": start, "end": end, "filter": filter},
+    )
+
+
+@hikari_mcp.tool(
+    name="get_hits",
+    title="Get Hits",
+    description="Return VictoriaLogs hit counts over time for a LogsQL query.",
+)
+async def get_hits(query: str, step: str = "1m", start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    return await _client().query("/select/logsql/hits", {"query": query, "step": step, "start": start, "end": end})
+
+
+@hikari_mcp.tool(
+    name="summarize_window",
+    title="Summarize Window",
+    description="Return the same high-level window summary as the UI: time buckets plus Service, Hostname, Level, Namespace, and Pod counts.",
+)
+async def summarize_window(
+    query: str = "_time:15m",
+    step: str = "1m",
+    limit: int = 25,
+    fields: list[str] | None = None,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, Any]:
+    bounded_limit = _bounded(limit, 25, MAX_FIELD_VALUE_LIMIT)
+    field_keys = _summary_field_keys(fields)
+    vl = _client()
+    hits = await vl.query("/select/logsql/hits", {"query": query, "step": step, "start": start, "end": end})
+    facets: dict[str, Any] = {}
+
+    for key in field_keys:
+        spec = SUMMARY_FIELDS.get(key, {"field": key, "label": key})
+        field = spec["field"]
+        values = _values(
+            await vl.query(
+                "/select/logsql/field_values",
+                {"query": query, "field": field, "limit": bounded_limit, "start": start, "end": end},
+            )
+        )
+        sources = [field]
+        fallback_field = spec.get("fallback_field")
+        if fallback_field and not values:
+            values = _values(
+                await vl.query(
+                    "/select/logsql/field_values",
+                    {"query": query, "field": fallback_field, "limit": bounded_limit, "start": start, "end": end},
+                )
+            )
+            sources.append(fallback_field)
+        facets[key] = {"label": spec["label"], "field": field, "sources": sources, "values": values}
+
+    return {"query": query, "step": step, "buckets": hits.get("values", []) if isinstance(hits, dict) else [], "facets": facets}
+
+
+@hikari_mcp.tool(
+    name="get_facets",
+    title="Get Facets",
+    description="Return VictoriaLogs facets for selected fields; defaults to the Hikari UI summary fields.",
+)
+async def get_facets(
+    query: str,
+    fields: list[str] | None = None,
+    limit: int = 20,
+    start: str | None = None,
+    end: str | None = None,
+) -> dict[str, Any]:
+    bounded_limit = _bounded(limit, 20, MAX_FIELD_VALUE_LIMIT)
+    return await _client().query(
+        "/select/logsql/facets",
+        {"query": query, "field": _facet_fields(fields), "limit": bounded_limit, "start": start, "end": end},
+    )
+
+
+@hikari_mcp.prompt(
+    name="investigate_hikari_logs",
+    title="Investigate Hikari Logs",
+    description="Guide an agent through a Hikari log investigation.",
+)
+def investigate_hikari_logs(request: str, starting_query: str = "_time:15m") -> str:
+    return (
+        f"Investigate Hikari logs for: {request}\n"
+        f"Start from LogsQL: {starting_query}\n\n"
+        "First call get_instructions to understand Hikari fields and workflow, then call summarize_window "
+        "to see the active time buckets, Service, Hostname, Level, Namespace, and Pod counts. "
+        "Use get_fields and get_field_values to discover additional structured data before narrowing. "
+        "Use query_logs for exact LogsQL searches, get_hits for time distribution, and get_facets for grouping. "
+        "Use ai_search when the request names a product, service, client, symptom, or natural-language condition "
+        "that needs mapping to observed field values or message text. Keep returned rows bounded and cite the "
+        "query and evidence used."
+    )
+
+
+def create_hikari_mcp() -> FastMCP:
+    server = FastMCP(
+        "Hikari",
+        instructions=hikari_mcp.instructions,
+        streamable_http_path="/",
+        stateless_http=True,
+        json_response=True,
+    )
+    server.add_tool(
+        get_instructions,
+        name="get_instructions",
+        title="Get Instructions",
+        description="Explain what Hikari is, how its log fields map to the UI, and which MCP tools to use.",
+    )
+    server.add_tool(
+        query_logs,
+        name="query_logs",
+        title="Query Logs",
+        description="Run a bounded VictoriaLogs LogsQL query and return rows plus basic stats.",
+    )
+    server.add_tool(
+        ai_search,
+        name="ai_search",
+        title="AI Search",
+        description="Generate LogsQL from a natural-language prompt, execute it, and return explanation, evidence, and rows.",
+    )
+    server.add_tool(
+        tail_logs,
+        name="tail_logs",
+        title="Tail Logs",
+        description="Sample the live VictoriaLogs tail for a bounded duration or row count.",
+    )
+    server.add_tool(
+        get_fields,
+        name="get_fields",
+        title="Get Fields",
+        description="List VictoriaLogs field names visible for a query window.",
+    )
+    server.add_tool(
+        get_field_values,
+        name="get_field_values",
+        title="Get Field Values",
+        description="List common values for one VictoriaLogs field within a query window.",
+    )
+    server.add_tool(
+        get_hits,
+        name="get_hits",
+        title="Get Hits",
+        description="Return VictoriaLogs hit counts over time for a LogsQL query.",
+    )
+    server.add_tool(
+        summarize_window,
+        name="summarize_window",
+        title="Summarize Window",
+        description="Return the same high-level window summary as the UI: time buckets plus Service, Hostname, Level, Namespace, and Pod counts.",
+    )
+    server.add_tool(
+        get_facets,
+        name="get_facets",
+        title="Get Facets",
+        description="Return VictoriaLogs facets for selected fields; defaults to the Hikari UI summary fields.",
+    )
+    server.prompt(
+        name="investigate_hikari_logs",
+        title="Investigate Hikari Logs",
+        description="Guide an agent through a Hikari log investigation.",
+    )(investigate_hikari_logs)
+    return server
+
+
+class HikariMcpASGI:
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        server = create_hikari_mcp()
+        app = server.streamable_http_app()
+        async with server.session_manager.run():
+            await app(scope, receive, send)
+
+
+hikari_mcp_app = HikariMcpASGI()

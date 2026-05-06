@@ -1,0 +1,80 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "hikari.fullname" . }}
+  labels:
+    {{- include "hikari.labels" . | nindent 4 }}
+  annotations:
+    {{- if .Values.deployment.reason }}
+    kubernetes.io/change-cause: "{{ .Values.image.tag }}: {{ .Values.deployment.reason }}{{ if .Values.deployment.triggeredBy }} (by {{ .Values.deployment.triggeredBy }}){{ end }}"
+    {{- end }}
+    {{- if .Values.deployment.timestamp }}
+    deployment.timestamp: {{ .Values.deployment.timestamp | quote }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  revisionHistoryLimit: {{ .Values.revisionHistoryLimit }}
+  selector:
+    matchLabels:
+      {{- include "hikari.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        {{- if .Values.deployment.timestamp }}
+        deployment.timestamp: {{ .Values.deployment.timestamp | quote }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "hikari.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/part-of: hikari
+    spec:
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: hikari
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8000
+              protocol: TCP
+          env:
+            - name: AWS_REGION
+              value: {{ .Values.env.awsRegion | quote }}
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: HIKARI_VICTORIA_URL
+              value: {{ .Values.env.victoriaUrl | quote }}
+            - name: HIKARI_OPENAI_API_KEY_SECRET_ID
+              value: {{ .Values.env.openAiSecretId | quote }}
+            - name: HIKARI_OPENAI_MODEL
+              value: {{ .Values.env.openAiModel | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      tolerations:
+        {{- toYaml .Values.tolerations | nindent 8 }}
+      affinity:
+        {{- toYaml .Values.affinity | nindent 8 }}

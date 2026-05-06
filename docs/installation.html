@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Install Hikari</title>
+    <meta
+      name="description"
+      content="Install Hikari locally, on Kubernetes, or behind your own authentication layer."
+    >
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-shell docs-shell">
+      <header class="site-chrome">
+        <a class="product" href="./index.html" aria-label="Hikari home">
+          <span class="mark" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 32 32" focusable="false">
+              <defs>
+                <linearGradient id="hikari-mark" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#5fe1ff" />
+                  <stop offset="55%" stop-color="#b277ff" />
+                  <stop offset="100%" stop-color="#ff5fc8" />
+                </linearGradient>
+              </defs>
+              <path
+                d="M16 2 C17 11 21 15 30 16 C21 17 17 21 16 30 C15 21 11 17 2 16 C11 15 15 11 16 2 Z"
+                fill="url(#hikari-mark)"
+              />
+              <path
+                d="M16 9 C16.5 13.5 18.5 15.5 23 16 C18.5 16.5 16.5 18.5 16 23 C15.5 18.5 13.5 16.5 9 16 C13.5 15.5 15.5 13.5 16 9 Z"
+                fill="rgba(255,255,255,0.85)"
+              />
+            </svg>
+          </span>
+          <span>
+            <strong>Hikari</strong>
+            <small>Documentation</small>
+          </span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <a href="./index.html">Home</a>
+          <a href="./installation.html" aria-current="page">Installation</a>
+          <a href="./mcp.html">Documentation</a>
+          <a class="nav-cta" href="https://github.com/bradmb/hikari">GitHub</a>
+        </nav>
+      </header>
+
+      <div class="docs-layout">
+        <aside class="docs-sidebar" aria-label="Documentation navigation">
+          <strong>Documentation</strong>
+          <a href="./installation.html" aria-current="page">Installation</a>
+          <a href="./mcp.html">MCP tools</a>
+          <span>On this page</span>
+          <a href="#local">Local</a>
+          <a href="#kubernetes">Kubernetes</a>
+          <a href="#auth">Authentication</a>
+          <a href="#troubleshooting">Troubleshooting</a>
+        </aside>
+
+        <main class="docs-content">
+          <header class="docs-header">
+            <p class="eyebrow">Installation</p>
+            <h1>Deploy Hikari</h1>
+            <p>
+              Hikari runs as a Python/FastAPI service with a built web UI. Use the mock VictoriaLogs
+              backend for local development, or point the service at your own VictoriaLogs deployment.
+            </p>
+          </header>
+
+          <section id="local" class="docs-section">
+            <h2>Local development</h2>
+            <p>Copy the example environment and start the mock backend, API, and Vite UI.</p>
+            <pre class="code-sample"><code>Copy-Item .env.example .env
+docker compose up mock-victorialogs api web</code></pre>
+            <div class="reference-table compact" role="table" aria-label="Local services">
+              <div role="row"><strong>Service</strong><strong>URL</strong></div>
+              <div role="row"><code>web</code><span>http://localhost:5173</span></div>
+              <div role="row"><code>api</code><span>http://localhost:8000</span></div>
+              <div role="row"><code>mock-victorialogs</code><span>http://localhost:9428</span></div>
+            </div>
+            <p>To run the production-style combined image locally:</p>
+            <pre class="code-sample"><code>docker compose up hikari</code></pre>
+          </section>
+
+          <section class="docs-section">
+            <h2>Configuration</h2>
+            <div class="reference-table" role="table" aria-label="Environment variables">
+              <div role="row"><strong>Variable</strong><strong>Description</strong></div>
+              <div role="row"><code>HIKARI_VICTORIA_URL</code><span>VictoriaLogs base URL.</span></div>
+              <div role="row"><code>HIKARI_VICTORIA_BEARER_TOKEN</code><span>Optional bearer token for VictoriaLogs.</span></div>
+              <div role="row"><code>HIKARI_VICTORIA_HEADERS</code><span>Optional JSON object of extra headers for VictoriaLogs.</span></div>
+              <div role="row"><code>OPENAI_API_KEY</code><span>Optional key for natural-language query generation.</span></div>
+              <div role="row"><code>HIKARI_OPENAI_MODEL</code><span>Model used for natural-language query generation.</span></div>
+            </div>
+          </section>
+
+          <section id="kubernetes" class="docs-section">
+            <h2>Kubernetes</h2>
+            <p>Build and push an image, then install the included Helm chart with your registry and VictoriaLogs URL.</p>
+            <pre class="code-sample"><code>docker build -t registry.example.com/hikari:latest .
+docker push registry.example.com/hikari:latest
+
+helm upgrade --install hikari ./k8s/helm/hikari `
+  --namespace hikari `
+  --create-namespace `
+  --set image.repository=registry.example.com/hikari `
+  --set-string image.tag=latest `
+  --set env.victoriaUrl=http://victorialogs.example.svc:9428</code></pre>
+            <p>Verify the rollout and health endpoint.</p>
+            <pre class="code-sample"><code>kubectl -n hikari rollout status deployment/hikari
+kubectl -n hikari port-forward deployment/hikari 8000:8000
+
+curl http://localhost:8000/health</code></pre>
+          </section>
+
+          <section id="auth" class="docs-section">
+            <h2>Bring your own authentication</h2>
+            <p>
+              Hikari does not include end-user authentication or authorization. The safest deployment is
+              to keep it off the public Internet and expose it only on an internal network.
+            </p>
+            <p>
+              If you need external access, put the UI, API, and MCP endpoint behind your own access layer.
+              Common options include Cloudflare Access, Tailscale, WireGuard, Teleport, OAuth2 Proxy,
+              Pomerium, an SSO-aware reverse proxy, or a cloud provider private application gateway.
+            </p>
+            <p>
+              Protect MCP access the same way you protect the UI. MCP tools can query logs, discover fields,
+              and return operational data.
+            </p>
+          </section>
+
+          <section class="docs-section">
+            <h2>Deployment targets</h2>
+            <p>
+              Hikari is a Python/FastAPI application packaged as a container. Deploy it on a container
+              platform, VM, or Kubernetes cluster.
+            </p>
+          </section>
+
+          <section id="troubleshooting" class="docs-section">
+            <h2>Troubleshooting</h2>
+            <ul>
+              <li>Check <code>/health</code> to confirm the active VictoriaLogs URL and default query.</li>
+              <li>Confirm the API container or pod can reach <code>HIKARI_VICTORIA_URL</code>.</li>
+              <li>For MCP capability failures, use HTTP transport and <code>/mcp</code>.</li>
+              <li>For AI failures, configure <code>OPENAI_API_KEY</code> or the supported secret ID variable.</li>
+            </ul>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>

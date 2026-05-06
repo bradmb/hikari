@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Hikari MCP Documentation</title>
+    <meta
+      name="description"
+      content="MCP tools and Streamable HTTP connection details for Hikari."
+    >
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+    <link rel="stylesheet" href="./styles.css">
+  </head>
+  <body>
+    <div class="page-shell docs-shell">
+      <header class="site-chrome">
+        <a class="product" href="./index.html" aria-label="Hikari home">
+          <span class="mark" aria-hidden="true">
+            <svg width="20" height="20" viewBox="0 0 32 32" focusable="false">
+              <defs>
+                <linearGradient id="hikari-mark" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#5fe1ff" />
+                  <stop offset="55%" stop-color="#b277ff" />
+                  <stop offset="100%" stop-color="#ff5fc8" />
+                </linearGradient>
+              </defs>
+              <path
+                d="M16 2 C17 11 21 15 30 16 C21 17 17 21 16 30 C15 21 11 17 2 16 C11 15 15 11 16 2 Z"
+                fill="url(#hikari-mark)"
+              />
+              <path
+                d="M16 9 C16.5 13.5 18.5 15.5 23 16 C18.5 16.5 16.5 18.5 16 23 C15.5 18.5 13.5 16.5 9 16 C13.5 15.5 15.5 13.5 16 9 Z"
+                fill="rgba(255,255,255,0.85)"
+              />
+            </svg>
+          </span>
+          <span>
+            <strong>Hikari</strong>
+            <small>Documentation</small>
+          </span>
+        </a>
+
+        <nav class="site-nav" aria-label="Primary">
+          <a href="./index.html">Home</a>
+          <a href="./installation.html">Installation</a>
+          <a href="./mcp.html" aria-current="page">Documentation</a>
+          <a class="nav-cta" href="https://github.com/bradmb/hikari">GitHub</a>
+        </nav>
+      </header>
+
+      <div class="docs-layout">
+        <aside class="docs-sidebar" aria-label="Documentation navigation">
+          <strong>Documentation</strong>
+          <a href="./installation.html">Installation</a>
+          <a href="./mcp.html" aria-current="page">MCP tools</a>
+          <span>On this page</span>
+          <a href="#endpoint">Endpoint</a>
+          <a href="#workflow">Workflow</a>
+          <a href="#tools">Tools</a>
+          <a href="#examples">Examples</a>
+        </aside>
+
+        <main class="docs-content">
+          <header class="docs-header">
+            <p class="eyebrow">Model Context Protocol</p>
+            <h1>MCP tools</h1>
+            <p>
+              Hikari exposes log investigation tools over Streamable HTTP MCP so AI clients can inspect
+              VictoriaLogs data with bounded, discoverable operations.
+            </p>
+          </header>
+
+          <section id="endpoint" class="docs-section">
+            <h2>Endpoint</h2>
+            <p>Use HTTP transport in MCP clients.</p>
+            <pre class="code-sample"><code>https://logs.example.com/mcp</code></pre>
+          </section>
+
+          <section id="workflow" class="docs-section">
+            <h2>Recommended workflow</h2>
+            <ol>
+              <li>Call <code>get_instructions</code> to load field mapping and investigation guidance.</li>
+              <li>Call <code>summarize_window</code> to inspect the current time range and major facets.</li>
+              <li>Use <code>get_fields</code>, <code>get_field_values</code>, or <code>get_facets</code> before writing narrow queries.</li>
+              <li>Use <code>query_logs</code> for known LogsQL or <code>ai_search</code> for natural-language requests.</li>
+              <li>Keep result limits bounded and include the query in the final answer.</li>
+            </ol>
+          </section>
+
+          <section id="tools" class="docs-section">
+            <h2>Available tools</h2>
+            <div class="reference-table" role="table" aria-label="Hikari MCP tools">
+              <div role="row">
+                <strong role="columnheader">Tool</strong>
+                <strong role="columnheader">Purpose</strong>
+              </div>
+              <div role="row">
+                <code>get_instructions</code>
+                <span>Explains Hikari, field mapping, and the recommended workflow.</span>
+              </div>
+              <div role="row">
+                <code>summarize_window</code>
+                <span>Returns time buckets and UI-like facets for service, hostname, level, namespace, and pod.</span>
+              </div>
+              <div role="row">
+                <code>query_logs</code>
+                <span>Runs bounded VictoriaLogs LogsQL and returns rows plus count stats.</span>
+              </div>
+              <div role="row">
+                <code>ai_search</code>
+                <span>Generates LogsQL from a natural-language prompt, executes it, and returns evidence.</span>
+              </div>
+              <div role="row">
+                <code>get_facets</code>
+                <span>Returns grouped counts for selected fields.</span>
+              </div>
+              <div role="row">
+                <code>get_fields</code>
+                <span>Lists field names visible for a query window.</span>
+              </div>
+              <div role="row">
+                <code>get_field_values</code>
+                <span>Lists common values for one field within a query window.</span>
+              </div>
+              <div role="row">
+                <code>get_hits</code>
+                <span>Returns hit counts over time for a LogsQL query.</span>
+              </div>
+              <div role="row">
+                <code>tail_logs</code>
+                <span>Samples the live VictoriaLogs tail for a bounded duration or row count.</span>
+              </div>
+            </div>
+          </section>
+
+          <section id="examples" class="docs-section">
+            <h2>Example calls</h2>
+            <pre class="code-sample"><code>get_instructions()
+
+summarize_window({
+  "query": "_time:15m",
+  "step": "1m",
+  "limit": 25
+})
+
+ai_search({
+  "prompt": "summarize checkout errors from the last hour",
+  "limit": 50
+})
+
+query_logs({
+  "query": "_time:15m level:error service:\"api\"",
+  "limit": 100
+})</code></pre>
+          </section>
+        </main>
+      </div>
+    </div>
+  </body>
+</html>
