@@ -1304,6 +1304,16 @@ function App() {
           />
           <button className="add-button" onClick={() => void runSearch()}>Add</button>
         </div>
+        {appliedFilters.length > 0 && (
+          <div className="active-filters query-active-filters" aria-label="Active filters">
+            {appliedFilters.map((filter) => (
+              <button key={`${filter.field}:${filter.value}`} onClick={() => removeFilter(filter)}>
+                <X size={12} />
+                <span>{filter.field}:{filter.value}</span>
+              </button>
+            ))}
+          </div>
+        )}
       </section>
 
       <aside className="facets">
@@ -1346,18 +1356,6 @@ function App() {
               <Plus size={15} />
             </button>
           </div>
-
-          {appliedFilters.length > 0 && (
-            <div className="active-filters">
-              {appliedFilters.map((filter) => (
-                <button key={`${filter.field}:${filter.value}`} onClick={() => removeFilter(filter)}>
-                  <X size={12} />
-                  <span>{filter.field}:{filter.value}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
           <div className="facet-list">
             {visibleFacetDefinitions.map(({ field, label }) => {
               const values = visibleValuesForField(field, label);

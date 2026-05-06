@@ -265,6 +265,8 @@ button {
   padding: 10px 16px;
   background: var(--bg-app);
   border-bottom: 1px solid var(--border-soft);
+  display: grid;
+  gap: 8px;
 }
 
 .query-line {
@@ -450,12 +452,17 @@ button {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  padding: 0 14px 10px;
+}
+
+.query-active-filters {
+  justify-content: flex-end;
+  align-items: center;
+  max-width: 100%;
 }
 
 .active-filters button {
   min-width: 0;
-  max-width: 100%;
+  max-width: min(360px, 100%);
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2682,6 +2689,10 @@ time {
 
   .global-query {
     padding: 8px;
+  }
+
+  .query-active-filters {
+    justify-content: flex-start;
   }
 
   .query-line {
