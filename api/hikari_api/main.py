@@ -7,6 +7,8 @@ from typing import Any
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.responses import Response
 from starlette.responses import StreamingResponse
 
 from .ai import generate_logsql
@@ -124,6 +126,17 @@ async def ai_query(
 app.mount("/mcp", hikari_mcp_app, name="hikari-mcp")
 
 
+class SPAStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope: dict[str, Any]) -> Response:
+        try:
+            return await super().get_response(path, scope)
+        except StarletteHTTPException as exc:
+            is_route_like_path = "." not in Path(path).name
+            if exc.status_code == 404 and scope["method"] in {"GET", "HEAD"} and is_route_like_path:
+                return await super().get_response("index.html", scope)
+            raise
+
+
 web_dir = Path(__file__).resolve().parents[1] / "web"
 if web_dir.exists():
-    app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
+    app.mount("/", SPAStaticFiles(directory=web_dir, html=True), name="web")

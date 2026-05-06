@@ -109,6 +109,10 @@ type AppliedFilter = {
 
 type ViewMode = "welcome" | "answer" | "explore";
 
+function modeFromPath(pathname: string): ViewMode {
+  return pathname === "/browse" ? "explore" : "welcome";
+}
+
 type Suggestion = {
   text: string;
   tone: "error" | "warning" | "info" | "neutral";
@@ -711,7 +715,7 @@ function App() {
   const [aiSteps, setAiSteps] = useState<AiStep[]>([]);
   const [live, setLive] = useState(false);
   const [liveStatus, setLiveStatus] = useState<"off" | "connecting" | "streaming" | "reconnecting" | "error">("off");
-  const [mode, setMode] = useState<ViewMode>("welcome");
+  const [mode, setMode] = useState<ViewMode>(() => modeFromPath(window.location.pathname));
   const tailRef = useRef<EventSource | null>(null);
   const aiCloseTimerRef = useRef<number | null>(null);
   const manualValueRef = useRef<HTMLInputElement | null>(null);
@@ -719,6 +723,22 @@ function App() {
   const tailQueueRef = useRef<LogRow[]>([]);
   const constellationRef = useRef<HTMLDivElement | null>(null);
   const tailRecentRef = useRef<LogRow[]>([]);
+
+  useEffect(() => {
+    function handlePopState() {
+      setMode(modeFromPath(window.location.pathname));
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    const targetPath = mode === "explore" ? "/browse" : "/";
+    if (window.location.pathname !== targetPath && ["/", "/browse"].includes(window.location.pathname)) {
+      window.history.pushState({}, "", targetPath);
+    }
+  }, [mode]);
 
   async function runSearch(nextQuery = draftQuery, options: { relaxIfEmpty?: boolean } = {}) {
     setLoading(true);
