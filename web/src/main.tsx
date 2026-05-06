@@ -109,8 +109,78 @@ type AppliedFilter = {
 
 type ViewMode = "welcome" | "answer" | "explore";
 
+const selectedEventParam = "event";
+const selectedEventStoragePrefix = "hikari:selected-event:";
+
 function modeFromPath(pathname: string): ViewMode {
   return pathname === "/browse" ? "explore" : "welcome";
+}
+
+function selectedEventIdFromUrl(): string | null {
+  return new URLSearchParams(window.location.search).get(selectedEventParam);
+}
+
+function stableLogJson(row: LogRow): string {
+  const sorted: LogRow = {};
+  Object.keys(row).sort().forEach((key) => {
+    sorted[key] = row[key];
+  });
+  return JSON.stringify(sorted);
+}
+
+function hashText(value: string): string {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(36);
+}
+
+function logEventId(row: LogRow): string {
+  return hashText([
+    timeValue(row),
+    levelValue(row),
+    serviceValue(row),
+    hostValue(row),
+    message(row),
+    stableLogJson(row)
+  ].join("|"));
+}
+
+function storedLogEvent(id: string): LogRow | null {
+  try {
+    const value = window.localStorage.getItem(`${selectedEventStoragePrefix}${id}`);
+    return value ? JSON.parse(value) as LogRow : null;
+  } catch {
+    return null;
+  }
+}
+
+function storeLogEvent(row: LogRow): string {
+  const id = logEventId(row);
+  try {
+    window.localStorage.setItem(`${selectedEventStoragePrefix}${id}`, stableLogJson(row));
+  } catch {
+    // URL state still works for rows that remain in memory.
+  }
+  return id;
+}
+
+function rowForEventId(id: string, rows: LogRow[]): LogRow | null {
+  return rows.find((row) => logEventId(row) === id) ?? storedLogEvent(id);
+}
+
+function buildAppUrl(mode: ViewMode, eventId?: string | null): string {
+  const params = new URLSearchParams(window.location.search);
+  if (mode === "explore" && eventId) {
+    params.set(selectedEventParam, eventId);
+  } else {
+    params.delete(selectedEventParam);
+  }
+  const path = mode === "explore" ? "/browse" : "/";
+  const query = params.toString();
+  return `${path}${query ? `?${query}` : ""}`;
 }
 
 type Suggestion = {
@@ -723,10 +793,51 @@ function App() {
   const tailQueueRef = useRef<LogRow[]>([]);
   const constellationRef = useRef<HTMLDivElement | null>(null);
   const tailRecentRef = useRef<LogRow[]>([]);
+  const selectedEventIdRef = useRef<string | null>(selectedEventIdFromUrl());
+
+  function updateAppUrl(nextMode: ViewMode, eventId?: string | null, replace = false) {
+    if (!["/", "/browse"].includes(window.location.pathname)) return;
+    const next = buildAppUrl(nextMode, eventId);
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (current === next) return;
+    window.history[replace ? "replaceState" : "pushState"]({}, "", next);
+  }
+
+  function selectLogEvent(row: LogRow, replace = false) {
+    const id = storeLogEvent(row);
+    selectedEventIdRef.current = id;
+    setSelected(row);
+    setMode("explore");
+    updateAppUrl("explore", id, replace);
+  }
+
+  function clearSelectedLogEvent(replace = false) {
+    selectedEventIdRef.current = null;
+    setSelected(null);
+    if (window.location.pathname === "/browse") updateAppUrl("explore", null, replace);
+  }
+
+  function restoreSelectedLogEvent(nextRows = rows) {
+    const id = selectedEventIdFromUrl();
+    selectedEventIdRef.current = id;
+    if (!id) {
+      setSelected(null);
+      return;
+    }
+    const row = rowForEventId(id, nextRows);
+    if (row) setSelected(row);
+  }
 
   useEffect(() => {
     function handlePopState() {
-      setMode(modeFromPath(window.location.pathname));
+      const nextMode = modeFromPath(window.location.pathname);
+      setMode(nextMode);
+      if (nextMode === "explore") {
+        restoreSelectedLogEvent();
+      } else {
+        selectedEventIdRef.current = null;
+        setSelected(null);
+      }
     }
 
     window.addEventListener("popstate", handlePopState);
@@ -734,11 +845,12 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const targetPath = mode === "explore" ? "/browse" : "/";
-    if (window.location.pathname !== targetPath && ["/", "/browse"].includes(window.location.pathname)) {
-      window.history.pushState({}, "", targetPath);
+    if (mode !== "explore") {
+      selectedEventIdRef.current = null;
+      if (selected) setSelected(null);
     }
-  }, [mode]);
+    updateAppUrl(mode, mode === "explore" ? selectedEventIdRef.current : null);
+  }, [mode, selected]);
 
   async function runSearch(nextQuery = draftQuery, options: { relaxIfEmpty?: boolean } = {}) {
     setLoading(true);
@@ -764,7 +876,13 @@ function App() {
       ]);
       const nextRows = searchResult.rows.length ? searchResult.rows : [];
       setRows(nextRows);
-      setSelected(null);
+      const selectedId = selectedEventIdFromUrl();
+      if (selectedId) {
+        selectedEventIdRef.current = selectedId;
+        setSelected(rowForEventId(selectedId, nextRows));
+      } else {
+        setSelected(null);
+      }
       setQuery(activeQuery);
       if (relaxations.length === 0) setDraftQuery(activeQuery);
       setAiRelaxations(relaxations);
@@ -939,6 +1057,10 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (mode === "explore") restoreSelectedLogEvent();
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (aiCloseTimerRef.current !== null) window.clearTimeout(aiCloseTimerRef.current);
     };
@@ -952,7 +1074,7 @@ function App() {
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") setSelected(null);
+      if (event.key === "Escape") clearSelectedLogEvent();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -1470,9 +1592,9 @@ function App() {
               key={`${timeValue(row)}-${index}`}
               role="button"
               tabIndex={0}
-              onClick={() => setSelected(row)}
+              onClick={() => selectLogEvent(row)}
               onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") setSelected(row);
+                if (event.key === "Enter" || event.key === " ") selectLogEvent(row);
               }}
               className={`log-row sev-${severityKey(levelValue(row))} ${selected === row ? "selected" : ""}`}
             >
@@ -1483,14 +1605,14 @@ function App() {
       </main>
 
       {selected && (
-        <div className="event-overlay" role="dialog" aria-modal="true" aria-label="Log event" onMouseDown={() => setSelected(null)}>
+        <div className="event-overlay" role="dialog" aria-modal="true" aria-label="Log event" onMouseDown={() => clearSelectedLogEvent()}>
           <aside className="event-panel" onMouseDown={(event) => event.stopPropagation()}>
             <div className="drawer-head">
               <div>
                 <strong>Log event</strong>
                 <span title={timeValue(selected)}>{localTimeValue(selected)}</span>
               </div>
-              <button onClick={() => setSelected(null)} title="Close"><X size={17} /></button>
+              <button onClick={() => clearSelectedLogEvent()} title="Close"><X size={17} /></button>
             </div>
             <p>{message(selected)}</p>
             <div className="field-grid">
@@ -1729,7 +1851,7 @@ function App() {
                       <button
                         key={`answer-sample-${index}`}
                         className={`answer-sample sev-${sev}`}
-                        onClick={() => { setMode("explore"); setSelected(row); }}
+                        onClick={() => selectLogEvent(row)}
                       >
                         <span className={`level-badge ${sev}`} title={level}>{levelLabel(level)}</span>
                         <time className="answer-sample-time">{localTimeValue(row).split("  ")[1] ?? ""}</time>
