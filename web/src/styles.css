@@ -393,7 +393,7 @@ button {
 .query-line {
   height: 36px;
   display: grid;
-  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-columns: 28px minmax(0, 1fr) auto auto;
   align-items: center;
   border: 1px solid var(--border);
   border-radius: 3px;
@@ -418,9 +418,27 @@ button {
   font-size: 12.5px;
 }
 
+.clear-query-button {
+  width: 28px;
+  height: 28px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.clear-query-button:hover {
+  color: var(--text);
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
+
 .add-button {
   height: 36px;
-  margin-left: 14px;
+  margin-left: 8px;
   padding: 0 22px;
   border: 1px solid rgba(95, 225, 255, 0.45);
   border-radius: 4px;

@@ -81,6 +81,7 @@ const startParam = "start";
 const endParam = "end";
 const selectedEventParam = "event";
 const selectedEventStoragePrefix = "hikari:selected-event:";
+const timeFilterPattern = /\b_time:(?:\[[^\]\)]*[\]\)]|day_range[\[\(][^\]\)]*[\]\)]|week_range[\[\(][^\]\)]*[\]\)]|[^\s)]+)/;
 
 function modeFromPath(pathname: string): ViewMode {
   return pathname === "/browse" ? "explore" : "welcome";
@@ -464,6 +465,27 @@ function formatTimeWindow(window: QueryWindow): string {
   return `${formatChartTime(start)} to ${formatChartTime(end)}`;
 }
 
+function parseTimeRangeToken(token: string): { start: number; end: number } | null {
+  const match = token.match(/^_time:\[([^,\]]+),\s*([^\]\)]+)[\]\)]$/);
+  if (!match) return null;
+  const start = Date.parse(normalizeIsoTimestamp(match[1].trim()));
+  const end = Date.parse(normalizeIsoTimestamp(match[2].trim()));
+  if (Number.isNaN(start) || Number.isNaN(end) || end <= start) return null;
+  return { start, end };
+}
+
+function formatTimeTokenLabel(token: string): { label: string; shortLabel: string; query: string } {
+  const range = parseTimeRangeToken(token);
+  if (range) {
+    return {
+      label: `${formatChartTime(range.start)} to ${formatChartTime(range.end)}`,
+      shortLabel: "range",
+      query: token
+    };
+  }
+  return { label: token, shortLabel: token.replace("_time:", ""), query: token };
+}
+
 function parseDurationMs(value: string): number | null {
   const match = value.trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i);
   if (!match) return null;
@@ -495,7 +517,10 @@ function timeRangeForQuery(query: string, window: QueryWindow): { start: number;
   if (!Number.isNaN(windowStart) && !Number.isNaN(windowEnd) && windowEnd > windowStart) {
     return { start: windowStart, end: windowEnd };
   }
-  const duration = parseDurationMs(timeToken(query).replace("_time:", "")) ?? 15 * 60 * 1000;
+  const token = timeToken(query);
+  const tokenRange = parseTimeRangeToken(token);
+  if (tokenRange) return tokenRange;
+  const duration = parseDurationMs(token.replace("_time:", "")) ?? 15 * 60 * 1000;
   const end = Date.now();
   return { start: end - duration, end };
 }
@@ -543,19 +568,30 @@ function normalizeHitBuckets(result: HitsResponse): HitBucket[] {
 }
 
 function timeToken(query: string): string {
-  return query.match(/\b_time:[^\s)]+/)?.[0] ?? defaultLogQuery;
+  return query.match(timeFilterPattern)?.[0] ?? defaultLogQuery;
 }
 
 function replaceTimeToken(query: string, token: string): string {
   const trimmed = query.trim();
   if (!trimmed) return token;
-  if (/\b_time:[^\s)]+/.test(trimmed)) return trimmed.replace(/\b_time:[^\s)]+/, token);
+  if (timeFilterPattern.test(trimmed)) return trimmed.replace(timeFilterPattern, token);
   return `${token} ${trimmed}`;
+}
+
+function logsQlTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toISOString().replace(/\.\d{3}Z$/, "Z");
+}
+
+function timeRangeToken(window: QueryWindow): string {
+  if (!window.start || !window.end) return defaultLogQuery;
+  return `_time:[${logsQlTime(window.start)}, ${logsQlTime(window.end)})`;
 }
 
 function presetForQuery(query: string) {
   const token = timeToken(query);
-  return timePresets.find((preset) => preset.query === token) ?? { label: token, shortLabel: token.replace("_time:", ""), query: token };
+  return timePresets.find((preset) => preset.query === token) ?? formatTimeTokenLabel(token);
 }
 
 function toDatetimeLocal(value: string | null | undefined): string {
@@ -1534,9 +1570,11 @@ function App() {
       start: new Date(start.startTime).toISOString(),
       end: new Date(end.endTime).toISOString()
     };
-    setTimeWindow(nextWindow);
+    const nextQuery = replaceTimeToken(draftQuery, timeRangeToken(nextWindow));
+    setDraftQuery(nextQuery);
+    setTimeWindow({});
     setLive(false);
-    void runSearch(draftQuery, { window: nextWindow, filters: appliedFilters });
+    void runSearch(nextQuery, { window: {}, filters: appliedFilters });
   }
 
   function clearTimeWindow() {
@@ -1544,15 +1582,29 @@ function App() {
     void runSearch(draftQuery, { window: {}, filters: appliedFilters });
   }
 
+  function resetLogQuery() {
+    setDraftQuery(defaultLogQuery);
+    setAppliedFilters([]);
+    setTimeWindow({});
+    setLive(false);
+    void runSearch(defaultLogQuery, { filters: [], window: {} });
+  }
+
   function openTimeMenu() {
     if (!timeMenuOpen) {
       if (hasTimeWindow(timeWindow)) {
         setCustomStart(toDatetimeLocal(timeWindow.start));
         setCustomEnd(toDatetimeLocal(timeWindow.end));
-      } else if (!customStart || !customEnd) {
-        const fallback = defaultCustomWindow();
-        setCustomStart(fallback.start);
-        setCustomEnd(fallback.end);
+      } else {
+        const tokenRange = parseTimeRangeToken(timeToken(draftQuery));
+        if (tokenRange) {
+          setCustomStart(toDatetimeLocal(new Date(tokenRange.start).toISOString()));
+          setCustomEnd(toDatetimeLocal(new Date(tokenRange.end).toISOString()));
+        } else if (!customStart || !customEnd) {
+          const fallback = defaultCustomWindow();
+          setCustomStart(fallback.start);
+          setCustomEnd(fallback.end);
+        }
       }
     }
     setTimeMenuOpen((current) => !current);
@@ -1574,10 +1626,12 @@ function App() {
       return;
     }
     const nextWindow = { start, end };
-    setTimeWindow(nextWindow);
+    const nextQuery = replaceTimeToken(draftQuery, timeRangeToken(nextWindow));
+    setDraftQuery(nextQuery);
+    setTimeWindow({});
     setLive(false);
     setTimeMenuOpen(false);
-    void runSearch(draftQuery, { window: nextWindow, filters: appliedFilters });
+    void runSearch(nextQuery, { window: {}, filters: appliedFilters });
   }
 
   async function copySelectedPrompt() {
@@ -1685,6 +1739,7 @@ function App() {
   // gently twinkle. When a log event arrives, a random star flashes briefly in that severity's
   // color (cyan info / amber warning / magenta error). Reads as "the sky reacts to activity".
   useEffect(() => {
+    if (mode !== "welcome") return;
     const field = constellationRef.current;
     if (!field) return;
     const STAR_COUNT = 220;
@@ -1704,7 +1759,7 @@ function App() {
       s.style.setProperty("--baseline-opacity", `${0.25 + Math.random() * 0.5}`);
       field.append(s);
     }
-  }, []);
+  }, [mode]);
 
   useEffect(() => {
     const INTERVAL_MS = 520;
@@ -1936,6 +1991,11 @@ function App() {
             aria-label="LogsQL query"
             placeholder="Filter your logs. Press Space to search using natural language queries."
           />
+          {(draftQuery.trim() !== defaultLogQuery || appliedFilters.length > 0 || hasTimeWindow(timeWindow)) && (
+            <button className="clear-query-button" onClick={resetLogQuery} title="Clear query and filters" aria-label="Clear query and filters">
+              <X size={16} />
+            </button>
+          )}
           <button className="add-button" onClick={runDraftQuery}>Add</button>
         </div>
         {(appliedFilters.length > 0 || hasTimeWindow(timeWindow)) && (
