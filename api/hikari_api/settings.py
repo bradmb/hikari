@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
-from typing import Annotated
+from typing import Annotated, Any
 
 import boto3
 from botocore.exceptions import BotoCoreError, ClientError
@@ -32,6 +32,8 @@ class Settings(BaseSettings):
         default_factory=lambda: ["host", "service", "source", "level", "status", "environment", "client"],
         alias="HIKARI_DEFAULT_FIELDS",
     )
+    field_mappings_file: str = Field("config/field-mappings.json", alias="HIKARI_FIELD_MAPPINGS_FILE")
+    field_mappings: dict[str, Any] = Field(default_factory=dict, alias="HIKARI_FIELD_MAPPINGS")
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openai_api_key_secret_id: str = Field("", alias="HIKARI_OPENAI_API_KEY_SECRET_ID")
     openai_model: str = Field("gpt-5.4-mini", alias="HIKARI_OPENAI_MODEL")
@@ -61,6 +63,20 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(field) for field in value]
         raise ValueError("HIKARI_DEFAULT_FIELDS must be a comma-separated string")
+
+    @field_validator("field_mappings", mode="before")
+    @classmethod
+    def parse_field_mappings(cls, value: object) -> dict[str, Any]:
+        if value in (None, ""):
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            parsed = json.loads(value)
+            if not isinstance(parsed, dict):
+                raise ValueError("HIKARI_FIELD_MAPPINGS must be a JSON object")
+            return parsed
+        raise ValueError("HIKARI_FIELD_MAPPINGS must be a JSON object")
 
     @field_validator("mcp_allowed_hosts", mode="before")
     @classmethod

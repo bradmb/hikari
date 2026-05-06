@@ -8,6 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .ai import generate_logsql
+from .field_mappings import aliases_for, get_field_mappings, summary_facets
 from .models import AiQueryRequest
 from .settings import Settings, get_settings
 from .victorialogs import VictoriaLogsClient
@@ -38,6 +39,10 @@ SUMMARY_FIELDS = {
     "namespace": {"field": "kubernetes.pod_namespace", "label": "Namespace"},
     "pod": {"field": "kubernetes.pod_name", "label": "Pod"},
 }
+
+
+def _field_mappings() -> dict[str, Any]:
+    return get_field_mappings(_settings())
 
 def _transport_security_settings() -> TransportSecuritySettings:
     allowed_hosts = get_settings().mcp_allowed_hosts
@@ -122,7 +127,7 @@ def _merge_values(*sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def _summary_field_keys(fields: list[str] | None) -> list[str]:
     if not fields:
-        return list(SUMMARY_FIELDS.keys())
+        return [str(facet.get("key") or facet["field"]) for facet in summary_facets(_field_mappings())]
     keys: list[str] = []
     for field in fields:
         normalized = field.strip()
@@ -144,7 +149,7 @@ def _summary_field_keys(fields: list[str] | None) -> list[str]:
 
 def _facet_fields(fields: list[str] | None) -> list[str]:
     if not fields:
-        return [spec["field"] for spec in SUMMARY_FIELDS.values()]
+        return [str(facet["field"]) for facet in summary_facets(_field_mappings())]
     aliases = {
         "namespace": "kubernetes.pod_namespace",
         "pod": "kubernetes.pod_name",
@@ -153,6 +158,29 @@ def _facet_fields(fields: list[str] | None) -> list[str]:
         "service": "kubernetes.container_name",
     }
     return [aliases.get(field.strip(), field.strip()) for field in fields if field.strip()]
+
+
+def _summary_spec(key: str, config: dict[str, Any]) -> dict[str, Any]:
+    def unique(values: list[str]) -> list[str]:
+        return list(dict.fromkeys(value for value in values if value))
+
+    for facet in summary_facets(config):
+        if key in {facet.get("key"), facet.get("field")}:
+            field = str(facet["field"])
+            aliases = aliases_for(config, field)
+            return {
+                "field": field,
+                "fallback_fields": unique([alias for alias in aliases if alias != field]),
+                "label": str(facet.get("label") or field),
+            }
+    fallback = SUMMARY_FIELDS.get(key, {"field": key, "label": key})
+    field = str(fallback["field"])
+    aliases = aliases_for(config, field)
+    return {
+        "field": field,
+        "fallback_fields": unique([*fallback.get("fallback_fields", []), *[alias for alias in aliases if alias != field]]),
+        "label": str(fallback.get("label") or field),
+    }
 
 
 @hikari_mcp.tool(
@@ -174,8 +202,8 @@ async def get_instructions() -> dict[str, Any]:
             "Use tail_logs only for a short bounded sample of fresh activity.",
         ],
         "field_glossary": {
-            "Service": "The app/service identity; Hikari checks service/app labels first, then Kubernetes container and pod names.",
-            "Hostname": "The host or node that emitted the log; Hikari checks hostname/host first, then Kubernetes node metadata.",
+            "Service": "The app/service identity resolved through the configured service field aliases.",
+            "Hostname": "The host or node that emitted the log resolved through the configured host field aliases.",
             "Level": "Severity such as error, info, warning, or debug.",
             "Namespace": "Kubernetes namespace from kubernetes.pod_namespace.",
             "Pod": "Kubernetes pod name from kubernetes.pod_name.",
@@ -321,11 +349,12 @@ async def summarize_window(
     bounded_limit = _bounded(limit, 25, MAX_FIELD_VALUE_LIMIT)
     field_keys = _summary_field_keys(fields)
     vl = _client()
+    config = _field_mappings()
     hits = await vl.query("/select/logsql/hits", {"query": query, "step": step, "start": start, "end": end})
     facets: dict[str, Any] = {}
 
     for key in field_keys:
-        spec = SUMMARY_FIELDS.get(key, {"field": key, "label": key})
+        spec = _summary_spec(key, config)
         field = spec["field"]
         value_sets = [
             _values(

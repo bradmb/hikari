@@ -22,6 +22,7 @@ podAnnotations: {}
 env:
   awsRegion: us-east-1
   victoriaUrl: http://victorialogs.example.svc:9428
+  fieldMappingsFile: /app/config/field-mappings.json
   openAiSecretId: kubernetes/hikari/openai
   openAiSecretName: ""
   openAiSecretKey: OPENAI_API_KEY
@@ -56,3 +57,90 @@ tolerations:
 
 nodeSelector: {}
 affinity: {}
+
+fieldMappings:
+  enabled: true
+  config:
+    defaultFields:
+      - environment
+      - service
+      - service.name
+      - host
+      - hostname
+      - host.name
+      - MachineName
+      - level
+      - severity_text
+      - source
+      - status
+      - client
+      - kubernetes.pod_namespace
+      - kubernetes.pod_name
+      - kubernetes.pod_node_name
+      - kubernetes.node_name
+      - kubernetes.container_name
+      - kubernetes.pod_labels.app.kubernetes.io/name
+      - kubernetes.pod_labels.k8s-app
+      - kubernetes.pod_labels.app
+    aliases:
+      environment:
+        - environment
+        - env
+        - Environment
+      service:
+        - service
+        - service.name
+        - app
+        - kubernetes.pod_labels.app.kubernetes.io/name
+        - kubernetes.pod_labels.k8s-app
+        - kubernetes.pod_labels.app
+        - kubernetes.pod_labels.app.kubernetes.io/component
+        - kubernetes.container_name
+        - source
+      host:
+        - host
+        - hostname
+        - host.name
+        - MachineName
+        - kubernetes.pod_node_name
+        - kubernetes.node_name
+      hostname:
+        - hostname
+        - host
+        - host.name
+        - MachineName
+        - kubernetes.pod_node_name
+        - kubernetes.node_name
+      level:
+        - level
+        - Level
+        - severity
+        - severity_text
+      kubernetes.pod_namespace:
+        - kubernetes.pod_namespace
+        - namespace
+      kubernetes.pod_name:
+        - kubernetes.pod_name
+        - pod
+    facets:
+      - field: environment
+        label: Environment
+      - field: service
+        label: Service
+        summary: true
+      - field: host
+        label: Host
+        summary: true
+      - field: level
+        label: Level
+        summary: true
+      - field: source
+        label: Source
+      - field: kubernetes.pod_namespace
+        key: namespace
+        label: Namespace
+        summary: true
+      - field: kubernetes.pod_name
+        key: pod
+        label: Pod
+        summary: true

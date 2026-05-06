@@ -78,6 +78,25 @@ HIKARI_VICTORIA_HEADERS={"X-Example-Header":"replace-me"}
 
 Keep secrets out of committed files.
 
+## Field Mappings
+
+Hikari resolves display columns, facets, MCP summaries, and hidden query alias expansion from `config/field-mappings.json`.
+
+Use `aliases` to map your log schema into canonical fields:
+
+```json
+{
+  "aliases": {
+    "service": ["service", "service.name", "app", "kubernetes.container_name"],
+    "host": ["host", "host.name", "hostname", "kubernetes.pod_node_name"]
+  }
+}
+```
+
+Use `facets` to choose which fields appear in the left sidebar and MCP summary output. In Kubernetes, the Helm chart mounts this JSON through a ConfigMap under `fieldMappings.config`.
+
+For non-Helm deployments, set `HIKARI_FIELD_MAPPINGS_FILE` to a mounted JSON file. `HIKARI_FIELD_MAPPINGS` can provide inline JSON overrides when a file mount is inconvenient.
+
 ## Optional AI Search
 
 Natural-language search requires an OpenAI API key:

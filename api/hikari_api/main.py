@@ -12,6 +12,7 @@ from starlette.responses import Response
 from starlette.responses import StreamingResponse
 
 from .ai import generate_logsql
+from .field_mappings import get_field_mappings
 from .hikari_mcp import hikari_mcp_app
 from .models import AiQueryRequest, FacetsRequest, FieldValuesRequest, HitsRequest, SearchRequest, SearchResponse
 from .settings import Settings, get_settings
@@ -48,6 +49,14 @@ def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
         "victoria_url": settings.victoria_url,
         "default_query": settings.default_query,
         "default_fields": settings.default_fields,
+    }
+
+
+@app.get("/api/config")
+def config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
+    return {
+        "default_query": settings.default_query,
+        "fieldMappings": get_field_mappings(settings),
     }
 
 

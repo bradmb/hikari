@@ -48,6 +48,8 @@ spec:
               value: "1"
             - name: HIKARI_VICTORIA_URL
               value: {{ .Values.env.victoriaUrl | quote }}
+            - name: HIKARI_FIELD_MAPPINGS_FILE
+              value: {{ .Values.env.fieldMappingsFile | quote }}
             {{- if .Values.env.openAiSecretName }}
             - name: OPENAI_API_KEY
               valueFrom:
@@ -81,6 +83,19 @@ spec:
             {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
+          {{- if .Values.fieldMappings.enabled }}
+          volumeMounts:
+            - name: field-mappings
+              mountPath: /app/config/field-mappings.json
+              subPath: field-mappings.json
+              readOnly: true
+          {{- end }}
+      {{- if .Values.fieldMappings.enabled }}
+      volumes:
+        - name: field-mappings
+          configMap:
+            name: {{ include "hikari.fullname" . }}-field-mappings
+      {{- end }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       tolerations:

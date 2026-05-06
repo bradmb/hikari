@@ -16,63 +16,15 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { generateQuery, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiStep, type LogRow, type QueryWindow, type ValueHit } from "./api";
+import { generateQuery, getAppConfig, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiStep, type FieldMappings, type LogRow, type QueryWindow, type ValueHit } from "./api";
 import "./styles.css";
 
-const defaultFields = [
-  "environment",
-  "service",
-  "service.name",
-  "host",
-  "hostname",
-  "host.name",
-  "MachineName",
-  "level",
-  "severity_text",
-  "source",
-  "status",
-  "client",
-  "kubernetes.pod_namespace",
-  "kubernetes.pod_name",
-  "kubernetes.pod_node_name",
-  "kubernetes.node_name",
-  "kubernetes.container_name",
-  "kubernetes.pod_labels.app.kubernetes.io/name",
-  "kubernetes.pod_labels.k8s-app",
-  "kubernetes.pod_labels.app"
-];
+const emptyFieldMappings: FieldMappings = { defaultFields: [], aliases: {}, facets: [] };
+let activeFieldMappings = emptyFieldMappings;
 
-const hostFields = [
-  "host",
-  "hostname",
-  "host.name",
-  "MachineName",
-  "kubernetes.pod_node_name",
-  "kubernetes.node_name"
-];
-
-const serviceFields = [
-  "service",
-  "service.name",
-  "app",
-  "kubernetes.pod_labels.app.kubernetes.io/name",
-  "kubernetes.pod_labels.k8s-app",
-  "kubernetes.pod_labels.app",
-  "kubernetes.pod_labels.app.kubernetes.io/component",
-  "kubernetes.container_name",
-  "source"
-];
-
-const priorityFilters = [
-  { field: "environment", label: "Environment" },
-  { field: "service", label: "Service" },
-  { field: "host", label: "Host" },
-  { field: "hostname", label: "Hostname" },
-  { field: "level", label: "Level" },
-  { field: "source", label: "Source" },
-  { field: "kubernetes.pod_namespace", label: "Namespace" },
-  { field: "kubernetes.pod_name", label: "Pod" }
-];
+function setActiveFieldMappings(next: FieldMappings) {
+  activeFieldMappings = next;
+}
 
 const aiProgressTemplate: AiStep[] = [
   {
@@ -141,6 +93,14 @@ type AppliedFilter = {
 type ViewMode = "welcome" | "answer" | "explore";
 
 const defaultLogQuery = "_time:15m";
+const timePresets = [
+  { label: "Past 15 Minutes", shortLabel: "15m", query: "_time:15m" },
+  { label: "Past 30 Minutes", shortLabel: "30m", query: "_time:30m" },
+  { label: "Past 1 Hour", shortLabel: "1h", query: "_time:1h" },
+  { label: "Past 4 Hours", shortLabel: "4h", query: "_time:4h" },
+  { label: "Past 12 Hours", shortLabel: "12h", query: "_time:12h" },
+  { label: "Past 24 Hours", shortLabel: "24h", query: "_time:24h" }
+];
 const logQueryParam = "q";
 const facetParam = "facet";
 const startParam = "start";
@@ -521,6 +481,42 @@ function formatTimeWindow(window: QueryWindow): string {
   return `${formatChartTime(start)} to ${formatChartTime(end)}`;
 }
 
+function timeToken(query: string): string {
+  return query.match(/\b_time:[^\s)]+/)?.[0] ?? defaultLogQuery;
+}
+
+function replaceTimeToken(query: string, token: string): string {
+  const trimmed = query.trim();
+  if (!trimmed) return token;
+  if (/\b_time:[^\s)]+/.test(trimmed)) return trimmed.replace(/\b_time:[^\s)]+/, token);
+  return `${token} ${trimmed}`;
+}
+
+function presetForQuery(query: string) {
+  const token = timeToken(query);
+  return timePresets.find((preset) => preset.query === token) ?? { label: token, shortLabel: token.replace("_time:", ""), query: token };
+}
+
+function toDatetimeLocal(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function datetimeLocalToIso(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function defaultCustomWindow(): { start: string; end: string } {
+  const end = new Date();
+  const start = new Date(end.getTime() - 15 * 60 * 1000);
+  return { start: toDatetimeLocal(start.toISOString()), end: toDatetimeLocal(end.toISOString()) };
+}
+
 function rowTimestamp(row: LogRow): number {
   const raw = timeValue(row);
   if (!raw) return NaN;
@@ -546,25 +542,25 @@ function levelLabel(level: string): string {
 }
 
 function levelValue(row: LogRow): string {
-  return asText(row.level ?? row.Level ?? row.severity ?? row.severity_text ?? "info");
+  return firstFieldValue(row, aliasFieldsForFilter("level")) || "info";
 }
 
 function fieldValue(row: LogRow, field: string): string {
-  if (field === "service") return serviceValue(row);
-  if (field === "host" || field === "hostname") return hostValue(row);
+  const aliases = aliasFieldsForFilter(field);
+  if (aliases.length > 1 || field in activeFieldMappings.aliases) return firstFieldValue(row, aliases);
   return asText(row[field]);
 }
 
 function envValue(row: LogRow): string {
-  return asText(row.environment ?? row.env ?? row.Environment);
+  return firstFieldValue(row, aliasFieldsForFilter("environment"));
 }
 
 function hostValue(row: LogRow): string {
-  return firstFieldValue(row, hostFields);
+  return firstFieldValue(row, aliasFieldsForFilter("host"));
 }
 
 function serviceValue(row: LogRow): string {
-  return firstFieldValue(row, serviceFields);
+  return firstFieldValue(row, aliasFieldsForFilter("service"));
 }
 
 function countFromHit(hit: Record<string, unknown>): number {
@@ -605,9 +601,8 @@ function levelVariants(value: string): string[] {
 }
 
 function aliasFieldsForFilter(field: string): string[] {
-  if (field === "service") return serviceFields;
-  if (field === "host" || field === "hostname") return hostFields;
-  return [field];
+  const mapped = activeFieldMappings.aliases[field]?.map((item) => item.trim()).filter(Boolean) ?? [];
+  return mapped.length > 0 ? mapped : [field];
 }
 
 function filterToken(field: string, value: string): string {
@@ -981,7 +976,9 @@ function App() {
   const [aiRelaxations, setAiRelaxations] = useState<string[]>([]);
   const [rows, setRows] = useState<LogRow[]>(sampleRows);
   const [hits, setHits] = useState<Array<Record<string, unknown>>>([]);
-  const [fields, setFields] = useState<string[]>(defaultFields);
+  const [fieldMappings, setFieldMappings] = useState<FieldMappings>(emptyFieldMappings);
+  const [configReady, setConfigReady] = useState(false);
+  const [fields, setFields] = useState<string[]>([]);
   const [facets, setFacets] = useState<Record<string, ValueHit[]>>({});
   const [facetCache, setFacetCache] = useState<Record<string, ValueHit[]>>({});
   const [facetSearch, setFacetSearch] = useState("");
@@ -999,6 +996,9 @@ function App() {
   const [live, setLive] = useState(false);
   const [liveStatus, setLiveStatus] = useState<"off" | "connecting" | "streaming" | "reconnecting" | "error">("off");
   const [mode, setMode] = useState<ViewMode>(() => modeFromPath(window.location.pathname));
+  const [timeMenuOpen, setTimeMenuOpen] = useState(false);
+  const [customStart, setCustomStart] = useState(() => toDatetimeLocal(initialLogState.window.start));
+  const [customEnd, setCustomEnd] = useState(() => toDatetimeLocal(initialLogState.window.end));
   const [hoveredBucket, setHoveredBucket] = useState<number | null>(null);
   const [dragRange, setDragRange] = useState<{ anchor: number; cursor: number } | null>(null);
   const histogramRef = useRef<HTMLElement | null>(null);
@@ -1141,7 +1141,7 @@ function App() {
         .map((item) => item.value.trim())
         .filter(Boolean)
         .slice(0, 24);
-      setFields(Array.from(new Set([...defaultFields, ...nextFields])));
+      setFields(Array.from(new Set([...fieldMappings.defaultFields, ...nextFields])));
       return { query: activeQuery, relaxations };
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
@@ -1312,8 +1312,44 @@ function App() {
   }
 
   useEffect(() => {
-    void runSearch(initialLogState.query, { replaceUrl: true, filters: initialLogState.filters, window: initialLogState.window });
+    let cancelled = false;
+    getAppConfig()
+      .then((config) => {
+        if (cancelled) return;
+        setActiveFieldMappings(config.fieldMappings);
+        setFieldMappings(config.fieldMappings);
+        setFields(config.fieldMappings.defaultFields);
+        setConfigReady(true);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setActiveFieldMappings(emptyFieldMappings);
+        setFieldMappings(emptyFieldMappings);
+        setConfigReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
+
+  useEffect(() => {
+    if (!configReady) return;
+    void runSearch(initialLogState.query, { replaceUrl: true, filters: initialLogState.filters, window: initialLogState.window });
+  }, [configReady]);
+
+  useEffect(() => {
+    setActiveFieldMappings(fieldMappings);
+  }, [fieldMappings]);
+
+  useEffect(() => {
+    setFields((current) => Array.from(new Set([...fieldMappings.defaultFields, ...current])));
+  }, [fieldMappings]);
+
+  useEffect(() => {
+    if (configReady && fields.length > 0 && !fields.includes(manualField)) {
+      setManualField(fields[0]);
+    }
+  }, [configReady, fields, manualField]);
 
   useEffect(() => {
     if (mode === "explore") restoreSelectedLogEvent();
@@ -1326,10 +1362,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    priorityFilters.forEach(({ field }) => {
+    fieldMappings.facets.forEach(({ field }) => {
       void loadFacet(field);
     });
-  }, [query, timeWindow]);
+  }, [query, timeWindow, appliedFilters, fieldMappings]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1446,6 +1482,42 @@ function App() {
   function clearTimeWindow() {
     setTimeWindow({});
     void runSearch(draftQuery, { window: {}, filters: appliedFilters });
+  }
+
+  function openTimeMenu() {
+    if (!timeMenuOpen) {
+      if (hasTimeWindow(timeWindow)) {
+        setCustomStart(toDatetimeLocal(timeWindow.start));
+        setCustomEnd(toDatetimeLocal(timeWindow.end));
+      } else if (!customStart || !customEnd) {
+        const fallback = defaultCustomWindow();
+        setCustomStart(fallback.start);
+        setCustomEnd(fallback.end);
+      }
+    }
+    setTimeMenuOpen((current) => !current);
+  }
+
+  function applyTimePreset(nextQueryToken: string) {
+    const nextQuery = replaceTimeToken(draftQuery, nextQueryToken);
+    setDraftQuery(nextQuery);
+    setTimeWindow({});
+    setTimeMenuOpen(false);
+    void runSearch(nextQuery, { window: {}, filters: appliedFilters });
+  }
+
+  function applyCustomTimeWindow() {
+    const start = datetimeLocalToIso(customStart);
+    const end = datetimeLocalToIso(customEnd);
+    if (!start || !end || Date.parse(start) >= Date.parse(end)) {
+      setError("Choose a valid custom time range.");
+      return;
+    }
+    const nextWindow = { start, end };
+    setTimeWindow(nextWindow);
+    setLive(false);
+    setTimeMenuOpen(false);
+    void runSearch(draftQuery, { window: nextWindow, filters: appliedFilters });
   }
 
   async function copySelectedPrompt() {
@@ -1660,14 +1732,17 @@ function App() {
   }, [rows, facets]);
 
   const facetDefinitions = useMemo(() => {
-    const known = new Set([...priorityFilters.map((filter) => filter.field), ...hostFields, ...serviceFields]);
+    const known = new Set([
+      ...fieldMappings.facets.map((filter) => filter.field),
+      ...Object.values(fieldMappings.aliases).flat()
+    ]);
     return [
-      ...priorityFilters,
+      ...fieldMappings.facets,
       ...fields
         .filter((field) => !known.has(field))
         .map((field) => ({ field, label: field }))
     ];
-  }, [fields]);
+  }, [fields, fieldMappings]);
 
   const visibleFacetDefinitions = useMemo(() => {
     const term = facetSearch.trim().toLowerCase();
@@ -1717,6 +1792,10 @@ function App() {
     return <span className="msg">{message(row)}</span>;
   }
 
+  const activePreset = presetForQuery(draftQuery);
+  const timeButtonLabel = hasTimeWindow(timeWindow) ? formatTimeWindow(timeWindow) : activePreset.label;
+  const timeButtonBadge = hasTimeWindow(timeWindow) ? "range" : activePreset.shortLabel;
+
   return (
     <>
     <div className={`shell ${mode !== "explore" ? "shell-dimmed" : ""}`} aria-hidden={mode !== "explore"}>
@@ -1735,11 +1814,40 @@ function App() {
               <span>Ask AI</span>
             </button>
           )}
-          <button className="time-button" title="Time range">
-            <Clock size={15} />
-            <strong>{hasTimeWindow(timeWindow) ? "range" : "15m"}</strong>
-            <span>{hasTimeWindow(timeWindow) ? formatTimeWindow(timeWindow) : "Past 15 Minutes"}</span>
-          </button>
+          <div className="time-menu-wrap">
+            <button className="time-button" title="Time range" aria-expanded={timeMenuOpen} onClick={openTimeMenu}>
+              <Clock size={15} />
+              <strong>{timeButtonBadge}</strong>
+              <span>{timeButtonLabel}</span>
+            </button>
+            {timeMenuOpen && (
+              <div className="time-menu" role="menu" aria-label="Time range">
+                <div className="time-menu-section">
+                  {timePresets.map((preset) => (
+                    <button
+                      key={preset.query}
+                      className={timeToken(draftQuery) === preset.query && !hasTimeWindow(timeWindow) ? "active" : ""}
+                      onClick={() => applyTimePreset(preset.query)}
+                    >
+                      <span>{preset.label}</span>
+                      <code>{preset.shortLabel}</code>
+                    </button>
+                  ))}
+                </div>
+                <div className="time-custom">
+                  <label>
+                    <span>Start</span>
+                    <input type="datetime-local" value={customStart} onChange={(event) => setCustomStart(event.target.value)} />
+                  </label>
+                  <label>
+                    <span>End</span>
+                    <input type="datetime-local" value={customEnd} onChange={(event) => setCustomEnd(event.target.value)} />
+                  </label>
+                  <button onClick={applyCustomTimeWindow}>Apply custom range</button>
+                </div>
+              </div>
+            )}
+          </div>
           <button className="icon-button" onClick={() => setLive((current) => !current)} title={live ? "Pause live tail" : "Start live tail"}>
             {live ? <Pause size={16} /> : <Play size={16} />}
           </button>

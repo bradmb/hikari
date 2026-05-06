@@ -13,6 +13,7 @@ WORKDIR /app
 COPY api/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY api/hikari_api ./hikari_api
+COPY config ./config
 COPY --from=web /web/dist ./web
 
 ENV HIKARI_VICTORIA_URL="http://localhost:9428"

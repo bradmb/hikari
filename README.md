@@ -36,6 +36,8 @@ Common environment variables:
 - `HIKARI_VICTORIA_HEADERS`: optional JSON object of extra headers for VictoriaLogs.
 - `HIKARI_DEFAULT_QUERY`: default LogsQL query, usually `_time:15m`.
 - `HIKARI_DEFAULT_FIELDS`: comma-separated fields to surface in the UI.
+- `HIKARI_FIELD_MAPPINGS_FILE`: JSON file that defines canonical fields, aliases, and default facets.
+- `HIKARI_FIELD_MAPPINGS`: optional inline JSON override for field mappings.
 - `OPENAI_API_KEY`: optional, enables natural-language query generation.
 - `HIKARI_OPENAI_MODEL`: model used for natural-language query generation.
 - `HIKARI_MCP_ALLOWED_HOSTS`: optional comma-separated Host header allowlist for MCP DNS rebinding protection.
@@ -45,6 +47,8 @@ AWS Secrets Manager variants are supported for deployments that load secrets at 
 - `HIKARI_VICTORIA_BEARER_TOKEN_SECRET_ID`
 - `HIKARI_VICTORIA_HEADERS_SECRET_ID`
 - `HIKARI_OPENAI_API_KEY_SECRET_ID`
+
+Field mappings live in `config/field-mappings.json`. Use this file to map your log schema into Hikari's canonical UI concepts. For example, map `service.name` into `service`, or add additional host aliases without rebuilding the web bundle.
 
 ## MCP
 

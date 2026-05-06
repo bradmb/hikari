@@ -23,6 +23,19 @@ export type QueryWindow = {
   end?: string | null;
 };
 
+export type FieldMappingFacet = {
+  field: string;
+  key?: string;
+  label: string;
+  summary?: boolean;
+};
+
+export type FieldMappings = {
+  defaultFields: string[];
+  aliases: Record<string, string[]>;
+  facets: FieldMappingFacet[];
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -86,4 +99,8 @@ export function generateQuery(prompt: string, currentQuery: string, fields: stri
 export function tailUrl(query: string) {
   const params = new URLSearchParams({ query });
   return `${API_BASE}/api/tail?${params.toString()}`;
+}
+
+export function getAppConfig() {
+  return request<{ default_query: string; fieldMappings: FieldMappings }>("/api/config");
 }

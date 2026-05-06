@@ -356,7 +356,7 @@ async def test_mcp_summarize_window_returns_ui_like_facets(monkeypatch):
     result = await hikari_mcp.summarize_window("_time:15m", limit=25)
 
     assert result["buckets"] == [{"time": "2026-05-01T18:00:00Z", "hits": 4}]
-    assert set(result["facets"]) == {"service", "hostname", "level", "namespace", "pod"}
+    assert set(result["facets"]) == {"service", "host", "level", "namespace", "pod"}
     assert result["facets"]["service"]["values"][0] == {"value": "collector", "hits": 41}
     assert result["facets"]["level"]["values"][0]["value"] == "error"
     assert result["facets"]["namespace"]["field"] == "kubernetes.pod_namespace"
@@ -385,7 +385,14 @@ async def test_mcp_summarize_window_uses_host_when_hostname_is_empty(monkeypatch
 
     result = await hikari_mcp.summarize_window("_time:15m", fields=["hostname"])
 
-    assert result["facets"]["hostname"]["sources"] == ["hostname", "host", "kubernetes.pod_node_name", "kubernetes.node_name"]
+    assert result["facets"]["hostname"]["sources"] == [
+        "hostname",
+        "host",
+        "kubernetes.pod_node_name",
+        "kubernetes.node_name",
+        "host.name",
+        "MachineName",
+    ]
     assert result["facets"]["hostname"]["values"][0] == {"value": "node-a.internal.example", "hits": 41717}
 
 
@@ -397,7 +404,7 @@ async def test_mcp_get_facets_defaults_to_summary_fields(monkeypatch):
     await hikari_mcp.get_facets("_time:15m")
 
     facets_call = next(data for path, data in fake.calls if path == "/select/logsql/facets")
-    assert facets_call["field"] == ["service", "hostname", "level", "kubernetes.pod_namespace", "kubernetes.pod_name"]
+    assert facets_call["field"] == ["service", "host", "level", "kubernetes.pod_namespace", "kubernetes.pod_name"]
 
 
 @pytest.mark.anyio
