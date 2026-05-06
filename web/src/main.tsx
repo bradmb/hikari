@@ -1019,18 +1019,32 @@ function App() {
     }
   }, [rows]);
 
-  // Direct-DOM tail crawl. The continuous upward scroll is a pure CSS keyframe animation on the track.
-  // New rows are just appended into the DOM at the bottom — no JS animation, no compensation. The
-  // append causes a 26px layout shift up (existing rows pop up one row), and the CSS scroll smoothly
-  // carries everything off the top over time. All motion is monotonically upward.
+  // Direct-DOM tail crawl with continuous RAF-driven smooth scroll.
+  // - Track is top-anchored. New rows are appended at the bottom of the column → they appear in the
+  //   100vh of bottom padding (off-screen below the viewport). No layout shift on existing rows.
+  // - RAF continuously increases `translateUp` at a fixed rate → track translates upward smoothly.
+  //   New rows scroll up into view from below.
+  // - When the buffer hits MAX_ROWS, the oldest row (already off-screen above) is removed and
+  //   `translateUp` is decremented by 26 in the same task to compensate the layout shift.
   useEffect(() => {
-    const MAX_ROWS = 80;
+    const MAX_ROWS = 100;
     const INTERVAL_MS = 560;
+    const SCROLL_PX_PER_SEC = 46;
+    const ROW_STRIDE = 26;
+    let translateUp = 0;
+    let lastTime = 0;
+    let rafId = 0;
+
+    function applyTransform() {
+      const track = tailTrackRef.current;
+      if (!track) return;
+      track.style.transform = `translateY(${-translateUp}px) rotateX(38deg)`;
+    }
 
     function buildRow(row: LogRow): HTMLDivElement {
       const sev = severityKey(levelValue(row));
       const div = document.createElement("div");
-      div.className = `tail-row is-new sev-${sev}`;
+      div.className = `tail-row sev-${sev}`;
 
       const time = document.createElement("span");
       time.textContent = localTimeValue(row).split("  ")[1] ?? "";
@@ -1053,8 +1067,7 @@ function App() {
       const next = tailQueueRef.current.shift();
       if (!next) return;
 
-      const rowEl = buildRow(next);
-      track.append(rowEl);
+      track.append(buildRow(next));
 
       while (track.children.length > MAX_ROWS) {
         const oldest = track.firstElementChild as HTMLElement | null;
@@ -1062,13 +1075,26 @@ function App() {
         const key = oldest.dataset.key;
         if (key) tailSeenRef.current.delete(key);
         oldest.remove();
+        translateUp -= ROW_STRIDE;
       }
-
-      window.setTimeout(() => rowEl.classList.remove("is-new"), 540);
+      applyTransform();
     }
 
+    function tick(now: number) {
+      if (lastTime === 0) lastTime = now;
+      const dt = Math.min((now - lastTime) / 1000, 0.1);
+      lastTime = now;
+      translateUp += SCROLL_PX_PER_SEC * dt;
+      applyTransform();
+      rafId = window.requestAnimationFrame(tick);
+    }
+
+    rafId = window.requestAnimationFrame(tick);
     const interval = window.setInterval(drain, INTERVAL_MS);
-    return () => window.clearInterval(interval);
+    return () => {
+      window.clearInterval(interval);
+      window.cancelAnimationFrame(rafId);
+    };
   }, []);
 
   const totalLogs = useMemo(() => {
