@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   ArrowRight,
   Bot,
@@ -1064,6 +1065,7 @@ function App() {
   const [hoveredBucket, setHoveredBucket] = useState<number | null>(null);
   const [dragRange, setDragRange] = useState<{ anchor: number; cursor: number } | null>(null);
   const histogramRef = useRef<HTMLElement | null>(null);
+  const logScrollRef = useRef<HTMLDivElement | null>(null);
   const tailRef = useRef<EventSource | null>(null);
   const aiCloseTimerRef = useRef<number | null>(null);
   const manualValueRef = useRef<HTMLInputElement | null>(null);
@@ -1626,6 +1628,13 @@ function App() {
 
   const mood = useMemo(() => deriveMood(rows), [rows]);
 
+  const rowVirtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => logScrollRef.current,
+    estimateSize: () => 32,
+    overscan: 16
+  });
+
   useEffect(() => {
     const root = document.documentElement;
     root.style.setProperty("--ambient-hue", String(mood.hue));
@@ -2112,25 +2121,37 @@ function App() {
           <div className="log-header">
             {logColumns.columns.map((column) => <span key={column.key}>{column.label}</span>)}
           </div>
-          {rows.length === 0 && (
-            <div className="log-empty">
-              {loading ? "Loading logs..." : "No logs match the current query."}
-            </div>
-          )}
-          {rows.map((row, index) => (
-            <div
-              key={`${timeValue(row)}-${index}`}
-              role="button"
-              tabIndex={0}
-              onClick={() => selectLogEvent(row)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") selectLogEvent(row);
-              }}
-              className={`log-row sev-${severityKey(levelValue(row))} ${selected === row ? "selected" : ""}`}
-            >
-              {logColumns.columns.map((column) => <React.Fragment key={column.key}>{renderLogCell(column.key, row)}</React.Fragment>)}
-            </div>
-          ))}
+          <div className="log-scroll" ref={logScrollRef}>
+            {rows.length === 0 && (
+              <div className="log-empty">
+                {loading ? "Loading logs..." : "No logs match the current query."}
+              </div>
+            )}
+            {rows.length > 0 && (
+              <div className="log-virtual-space" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+                {rowVirtualizer.getVirtualItems().map((virtualRow) => {
+                  const row = rows[virtualRow.index];
+                  return (
+                    <div
+                      key={virtualRow.key}
+                      ref={rowVirtualizer.measureElement}
+                      data-index={virtualRow.index}
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => selectLogEvent(row)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") selectLogEvent(row);
+                      }}
+                      className={`log-row sev-${severityKey(levelValue(row))} ${selected === row ? "selected" : ""}`}
+                      style={{ transform: `translateY(${virtualRow.start}px)` }}
+                    >
+                      {logColumns.columns.map((column) => <React.Fragment key={column.key}>{renderLogCell(column.key, row)}</React.Fragment>)}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </section>
       </main>
 
