@@ -132,6 +132,8 @@ type AppliedFilter = {
 
 type ViewMode = "welcome" | "answer" | "explore";
 
+const defaultLogQuery = "_time:15m";
+const logQueryParam = "q";
 const selectedEventParam = "event";
 const selectedEventStoragePrefix = "hikari:selected-event:";
 
@@ -141,6 +143,10 @@ function modeFromPath(pathname: string): ViewMode {
 
 function selectedEventIdFromUrl(): string | null {
   return new URLSearchParams(window.location.search).get(selectedEventParam);
+}
+
+function logQueryFromUrl(): string {
+  return new URLSearchParams(window.location.search).get(logQueryParam)?.trim() || defaultLogQuery;
 }
 
 function stableLogJson(row: LogRow): string {
@@ -194,8 +200,14 @@ function rowForEventId(id: string, rows: LogRow[]): LogRow | null {
   return rows.find((row) => logEventId(row) === id) ?? storedLogEvent(id);
 }
 
-function buildAppUrl(mode: ViewMode, eventId?: string | null): string {
+function buildAppUrl(mode: ViewMode, eventId?: string | null, logQuery?: string | null): string {
   const params = new URLSearchParams(window.location.search);
+  const cleanQuery = (logQuery ?? params.get(logQueryParam) ?? "").trim();
+  if (mode === "explore" && cleanQuery && cleanQuery !== defaultLogQuery) {
+    params.set(logQueryParam, cleanQuery);
+  } else {
+    params.delete(logQueryParam);
+  }
   if (mode === "explore" && eventId) {
     params.set(selectedEventParam, eventId);
   } else {
@@ -805,8 +817,9 @@ function relaxQuery(query: string): string | null {
 }
 
 function App() {
-  const [query, setQuery] = useState("_time:15m");
-  const [draftQuery, setDraftQuery] = useState("_time:15m");
+  const initialLogQuery = logQueryFromUrl();
+  const [query, setQuery] = useState(initialLogQuery);
+  const [draftQuery, setDraftQuery] = useState(initialLogQuery);
   const [aiPrompt, setAiPrompt] = useState("");
   const [aiExplanation, setAiExplanation] = useState("");
   const [aiEvidence, setAiEvidence] = useState<string[]>([]);
@@ -838,9 +851,9 @@ function App() {
   const tailRecentRef = useRef<LogRow[]>([]);
   const selectedEventIdRef = useRef<string | null>(selectedEventIdFromUrl());
 
-  function updateAppUrl(nextMode: ViewMode, eventId?: string | null, replace = false) {
+  function updateAppUrl(nextMode: ViewMode, eventId?: string | null, replace = false, nextQuery = query) {
     if (!["/", "/browse"].includes(window.location.pathname)) return;
-    const next = buildAppUrl(nextMode, eventId);
+    const next = buildAppUrl(nextMode, eventId, nextQuery);
     const current = `${window.location.pathname}${window.location.search}`;
     if (current === next) return;
     window.history[replace ? "replaceState" : "pushState"]({}, "", next);
@@ -874,9 +887,13 @@ function App() {
   useEffect(() => {
     function handlePopState() {
       const nextMode = modeFromPath(window.location.pathname);
+      const nextQuery = logQueryFromUrl();
       setMode(nextMode);
+      setQuery(nextQuery);
+      setDraftQuery(nextQuery);
       if (nextMode === "explore") {
         restoreSelectedLogEvent();
+        void runSearch(nextQuery, { replaceUrl: true });
       } else {
         selectedEventIdRef.current = null;
         setSelected(null);
@@ -895,7 +912,7 @@ function App() {
     updateAppUrl(mode, mode === "explore" ? selectedEventIdRef.current : null);
   }, [mode, selected]);
 
-  async function runSearch(nextQuery = draftQuery, options: { relaxIfEmpty?: boolean } = {}) {
+  async function runSearch(nextQuery = draftQuery, options: { relaxIfEmpty?: boolean; replaceUrl?: boolean } = {}) {
     setLoading(true);
     setError("");
     try {
@@ -928,6 +945,9 @@ function App() {
       }
       setQuery(activeQuery);
       if (relaxations.length === 0) setDraftQuery(activeQuery);
+      if (mode === "explore") {
+        updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery);
+      }
       setAiRelaxations(relaxations);
       setHits(hitResult.values ?? []);
       const nextFields = (fieldResult.values ?? [])
@@ -1097,7 +1117,7 @@ function App() {
   }
 
   useEffect(() => {
-    void runSearch("_time:15m");
+    void runSearch(logQueryFromUrl(), { replaceUrl: true });
   }, []);
 
   useEffect(() => {
