@@ -1096,6 +1096,7 @@ function App() {
     setSelected(row);
     setCopiedPrompt(false);
     setCopiedJson(false);
+    setLive(false);
     setMode("explore");
     updateAppUrl("explore", id, replace);
   }
