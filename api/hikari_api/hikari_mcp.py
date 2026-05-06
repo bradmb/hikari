@@ -17,8 +17,23 @@ MAX_FIELD_VALUE_LIMIT = 200
 MAX_TAIL_ROWS = 200
 MAX_TAIL_SECONDS = 60
 SUMMARY_FIELDS = {
-    "service": {"field": "service", "label": "Service"},
-    "hostname": {"field": "hostname", "fallback_field": "host", "label": "Hostname"},
+    "service": {
+        "field": "service",
+        "fallback_fields": [
+            "app",
+            "kubernetes.pod_labels.app.kubernetes.io/name",
+            "kubernetes.pod_labels.k8s-app",
+            "kubernetes.pod_labels.app",
+            "kubernetes.container_name",
+            "source",
+        ],
+        "label": "Service",
+    },
+    "hostname": {
+        "field": "hostname",
+        "fallback_fields": ["host", "kubernetes.pod_node_name", "kubernetes.node_name"],
+        "label": "Hostname",
+    },
     "level": {"field": "level", "label": "Level"},
     "namespace": {"field": "kubernetes.pod_namespace", "label": "Namespace"},
     "pod": {"field": "kubernetes.pod_name", "label": "Pod"},
@@ -91,6 +106,20 @@ def _values(result: Any) -> list[dict[str, Any]]:
     return [item for item in raw_values if isinstance(item, dict)]
 
 
+def _merge_values(*sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged: dict[str, dict[str, Any]] = {}
+    for values in sets:
+        for item in values:
+            value = str(item.get("value", "")).strip()
+            if not value:
+                continue
+            hits = item.get("hits", item.get("count", 0))
+            current = merged.get(value)
+            if current is None or int(hits or 0) > int(current.get("hits", 0) or 0):
+                merged[value] = {**item, "value": value, "hits": hits}
+    return sorted(merged.values(), key=lambda item: (-int(item.get("hits", 0) or 0), str(item.get("value", ""))))
+
+
 def _summary_field_keys(fields: list[str] | None) -> list[str]:
     if not fields:
         return list(SUMMARY_FIELDS.keys())
@@ -119,6 +148,9 @@ def _facet_fields(fields: list[str] | None) -> list[str]:
     aliases = {
         "namespace": "kubernetes.pod_namespace",
         "pod": "kubernetes.pod_name",
+        "host": "kubernetes.pod_node_name",
+        "hostname": "kubernetes.pod_node_name",
+        "service": "kubernetes.container_name",
     }
     return [aliases.get(field.strip(), field.strip()) for field in fields if field.strip()]
 
@@ -142,8 +174,8 @@ async def get_instructions() -> dict[str, Any]:
             "Use tail_logs only for a short bounded sample of fresh activity.",
         ],
         "field_glossary": {
-            "Service": "The app/service identity, usually the service field.",
-            "Hostname": "The host or node that emitted the log; Hikari checks hostname first and falls back to host.",
+            "Service": "The app/service identity; Hikari checks service/app labels first, then Kubernetes container and pod names.",
+            "Hostname": "The host or node that emitted the log; Hikari checks hostname/host first, then Kubernetes node metadata.",
             "Level": "Severity such as error, info, warning, or debug.",
             "Namespace": "Kubernetes namespace from kubernetes.pod_namespace.",
             "Pod": "Kubernetes pod name from kubernetes.pod_name.",
@@ -295,22 +327,26 @@ async def summarize_window(
     for key in field_keys:
         spec = SUMMARY_FIELDS.get(key, {"field": key, "label": key})
         field = spec["field"]
-        values = _values(
-            await vl.query(
-                "/select/logsql/field_values",
-                {"query": query, "field": field, "limit": bounded_limit, "start": start, "end": end},
-            )
-        )
-        sources = [field]
-        fallback_field = spec.get("fallback_field")
-        if fallback_field and not values:
-            values = _values(
+        value_sets = [
+            _values(
                 await vl.query(
                     "/select/logsql/field_values",
-                    {"query": query, "field": fallback_field, "limit": bounded_limit, "start": start, "end": end},
+                    {"query": query, "field": field, "limit": bounded_limit, "start": start, "end": end},
+                )
+            )
+        ]
+        sources = [field]
+        for fallback_field in spec.get("fallback_fields", []):
+            value_sets.append(
+                _values(
+                    await vl.query(
+                        "/select/logsql/field_values",
+                        {"query": query, "field": fallback_field, "limit": bounded_limit, "start": start, "end": end},
+                    )
                 )
             )
             sources.append(fallback_field)
+        values = _merge_values(*value_sets)[:bounded_limit]
         facets[key] = {"label": spec["label"], "field": field, "sources": sources, "values": values}
 
     return {"query": query, "step": step, "buckets": hits.get("values", []) if isinstance(hits, dict) else [], "facets": facets}

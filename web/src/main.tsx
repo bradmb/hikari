@@ -29,7 +29,30 @@ const defaultFields = [
   "client",
   "kubernetes.pod_namespace",
   "kubernetes.pod_name",
+  "kubernetes.pod_node_name",
+  "kubernetes.node_name",
+  "kubernetes.container_name",
+  "kubernetes.pod_labels.app.kubernetes.io/name",
+  "kubernetes.pod_labels.k8s-app",
+  "kubernetes.pod_labels.app"
+];
+
+const hostFields = [
+  "host",
+  "hostname",
+  "kubernetes.pod_node_name",
   "kubernetes.node_name"
+];
+
+const serviceFields = [
+  "service",
+  "app",
+  "kubernetes.pod_labels.app.kubernetes.io/name",
+  "kubernetes.pod_labels.k8s-app",
+  "kubernetes.pod_labels.app",
+  "kubernetes.pod_labels.app.kubernetes.io/component",
+  "kubernetes.container_name",
+  "source"
 ];
 
 const priorityFilters = [
@@ -328,6 +351,14 @@ function asText(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function firstFieldValue(row: LogRow, fields: string[]): string {
+  for (const field of fields) {
+    const value = asText(row[field]);
+    if (value) return value;
+  }
+  return "";
+}
+
 function message(row: LogRow): string {
   return asText(row._msg ?? row.message ?? row.msg ?? row.log);
 }
@@ -383,6 +414,8 @@ function levelValue(row: LogRow): string {
 }
 
 function fieldValue(row: LogRow, field: string): string {
+  if (field === "service") return serviceValue(row);
+  if (field === "host" || field === "hostname") return hostValue(row);
   return asText(row[field]);
 }
 
@@ -391,11 +424,11 @@ function envValue(row: LogRow): string {
 }
 
 function hostValue(row: LogRow): string {
-  return asText(row.host ?? row.hostname ?? row["kubernetes.node_name"]);
+  return firstFieldValue(row, hostFields);
 }
 
 function serviceValue(row: LogRow): string {
-  return asText(row.service ?? row.app ?? row.source);
+  return firstFieldValue(row, serviceFields);
 }
 
 function countFromHit(hit: Record<string, unknown>): number {
@@ -435,13 +468,23 @@ function levelVariants(value: string): string[] {
   return [value];
 }
 
+function aliasFieldsForFilter(field: string): string[] {
+  if (field === "service") return serviceFields;
+  if (field === "host" || field === "hostname") return hostFields;
+  return [field];
+}
+
 function filterToken(field: string, value: string): string {
   const cleanValue = value.trim();
   if (!field || !cleanValue) return "";
   if (field === "level") {
     return `(${levelVariants(cleanValue).map((variant) => `${field}:${quoteValue(variant)}`).join(" OR ")})`;
   }
-  return `${field}:${quoteValue(cleanValue)}`;
+  const fields = aliasFieldsForFilter(field);
+  if (fields.length > 1) {
+    return `(${fields.map((alias) => `${alias}:${quoteValue(cleanValue)}`).join(" OR ")})`;
+  }
+  return `${fields[0]}:${quoteValue(cleanValue)}`;
 }
 
 function addFilterToQuery(currentQuery: string, token: string): string {
@@ -458,7 +501,7 @@ function filterTokenForValues(field: string, values: string[]): string {
     if (field === "level") {
       return levelVariants(value).map((variant) => `${field}:${quoteValue(variant)}`);
     }
-    return [`${field}:${quoteValue(value)}`];
+    return aliasFieldsForFilter(field).map((alias) => `${alias}:${quoteValue(value)}`);
   }).flat();
   return `(${Array.from(new Set(tokens)).join(" OR ")})`;
 }
@@ -903,8 +946,9 @@ function App() {
 
   async function loadFacet(field: string) {
     try {
-      const result = await getFieldValues(query, field);
-      const nextValues = (result.values ?? []).filter((item) => item.value.trim());
+      const fieldsToLoad = aliasFieldsForFilter(field);
+      const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(query, sourceField)));
+      const nextValues = mergeFacetValues(field, ...results.map((result) => result.values));
       setFacets((current) => ({
         ...current,
         [field]: nextValues
@@ -1343,7 +1387,7 @@ function App() {
   }, [rows, facets]);
 
   const facetDefinitions = useMemo(() => {
-    const known = new Set(priorityFilters.map((filter) => filter.field));
+    const known = new Set([...priorityFilters.map((filter) => filter.field), ...hostFields, ...serviceFields]);
     return [
       ...priorityFilters,
       ...fields

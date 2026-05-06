@@ -24,7 +24,11 @@ DISCOVERY_FIELDS = [
     "kubernetes.pod_namespace",
     "kubernetes.pod_name",
     "kubernetes.container_name",
+    "kubernetes.pod_node_name",
     "kubernetes.node_name",
+    "kubernetes.pod_labels.app.kubernetes.io/name",
+    "kubernetes.pod_labels.k8s-app",
+    "kubernetes.pod_labels.app",
 ]
 
 LEVEL_ALIASES = {
@@ -215,6 +219,10 @@ def _summarize_row(row: dict[str, Any]) -> dict[str, Any]:
         "kubernetes.pod_namespace",
         "kubernetes.pod_name",
         "kubernetes.container_name",
+        "kubernetes.pod_node_name",
+        "kubernetes.pod_labels.app.kubernetes.io/name",
+        "kubernetes.pod_labels.k8s-app",
+        "kubernetes.pod_labels.app",
     ]
     summary = {key: row[key] for key in preferred_keys if row.get(key) not in (None, "")}
     if summary:
