@@ -1263,7 +1263,7 @@ function App() {
     <div className={`shell ${mode !== "explore" ? "shell-dimmed" : ""}`} aria-hidden={mode !== "explore"}>
       <header className="app-chrome">
         <div className="product">
-          <div className="mark" aria-label="Hikari">光</div>
+          <div className="mark" aria-label="Hikari"><HikariSparkle size={20} /></div>
           <div>
             <strong>Hikari</strong>
             <span>Log analysis system</span>
