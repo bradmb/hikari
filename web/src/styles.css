@@ -375,7 +375,6 @@ button {
     var(--bg-app);
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-gutter: stable;
   position: relative;
 }
 
