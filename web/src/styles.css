@@ -695,13 +695,13 @@ summary svg {
   min-width: 0;
   height: 26px;
   display: grid;
-  grid-template-columns: 14px 4px minmax(0, 1fr) minmax(38px, auto);
+  grid-template-columns: 14px 4px minmax(0, 1fr) 48px;
   gap: 8px;
   align-items: center;
   border: 0;
   background: transparent;
   color: var(--text);
-  padding: 0 20px 0 22px;
+  padding: 0 34px 0 22px;
   text-align: left;
   cursor: pointer;
   border-radius: 0;
@@ -758,7 +758,7 @@ summary svg {
   font-style: normal;
   font-variant-numeric: tabular-nums;
   justify-self: end;
-  min-width: 38px;
+  min-width: 0;
   text-align: right;
 }
 
