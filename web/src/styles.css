@@ -620,6 +620,17 @@ button {
   border-color: rgba(95, 225, 255, 0.55);
 }
 
+.active-filters button.exclude {
+  border-color: rgba(239, 91, 82, 0.42);
+  background: linear-gradient(135deg, rgba(239, 91, 82, 0.16), rgba(178, 119, 255, 0.1));
+  color: #ffd7d3;
+}
+
+.active-filters button.exclude:hover {
+  background: linear-gradient(135deg, rgba(239, 91, 82, 0.24), rgba(178, 119, 255, 0.16));
+  border-color: rgba(239, 91, 82, 0.62);
+}
+
 .active-filters span {
   min-width: 0;
   overflow: hidden;
@@ -1402,8 +1413,8 @@ time {
 
 .field-grid div {
   display: grid;
-  grid-template-columns: minmax(140px, 26%) minmax(0, 1fr) 30px;
-  gap: 12px;
+  grid-template-columns: minmax(140px, 26%) minmax(0, 1fr) 30px 30px;
+  gap: 8px;
   align-items: start;
   border: 1px solid var(--border-soft);
   border-radius: 3px;

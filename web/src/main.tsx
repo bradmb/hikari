@@ -9,6 +9,7 @@ import {
   Copy,
   Download,
   Filter,
+  Minus,
   Pause,
   Play,
   Plus,
@@ -62,6 +63,7 @@ type AppliedFilter = {
   field: string;
   value: string;
   token: string;
+  exclude?: boolean;
 };
 
 type ViewMode = "welcome" | "answer" | "explore";
@@ -113,17 +115,19 @@ function hasTimeWindow(window: QueryWindow): boolean {
   return Boolean(window.start && window.end);
 }
 
-function serializeFacet(filter: Pick<AppliedFilter, "field" | "value">): string {
-  return `${filter.field}:${filter.value}`;
+function serializeFacet(filter: Pick<AppliedFilter, "field" | "value" | "exclude">): string {
+  return `${filter.exclude ? "-" : ""}${filter.field}:${filter.value}`;
 }
 
 function parseFacet(value: string): AppliedFilter | null {
   const separator = value.indexOf(":");
   if (separator <= 0) return null;
-  const field = value.slice(0, separator).trim();
+  const rawField = value.slice(0, separator).trim();
+  const exclude = rawField.startsWith("-");
+  const field = (exclude ? rawField.slice(1) : rawField).trim();
   const rawValue = value.slice(separator + 1).trim();
   if (!field || !rawValue) return null;
-  return { field, value: displayFacetValue(field, rawValue), token: "" };
+  return { field, value: displayFacetValue(field, rawValue), token: "", exclude };
 }
 
 function facetsFromUrl(): AppliedFilter[] {
@@ -233,7 +237,7 @@ function buildAppUrl(
   mode: ViewMode,
   eventId?: string | null,
   logQuery?: string | null,
-  filters: Pick<AppliedFilter, "field" | "value">[] = [],
+  filters: Pick<AppliedFilter, "field" | "value" | "exclude">[] = [],
   queryWindow: QueryWindow = {}
 ): string {
   const params = new URLSearchParams(window.location.search);
@@ -708,6 +712,11 @@ function filterToken(field: string, value: string): string {
   return `${field}:=${quoteValue(cleanValue)}`;
 }
 
+function negateToken(token: string): string {
+  if (!token) return "";
+  return token.startsWith("(") ? `NOT ${token}` : `NOT ${token}`;
+}
+
 function expandedFilterToken(field: string, value: string): string {
   const cleanValue = value.trim();
   if (!field || !cleanValue) return "";
@@ -734,6 +743,10 @@ function filterTokenForValues(field: string, values: string[]): string {
   return `(${cleanValues.map((value) => filterToken(field, value)).join(" OR ")})`;
 }
 
+function negativeFilterTokenForValues(field: string, values: string[]): string {
+  return negateToken(filterTokenForValues(field, values));
+}
+
 function expandedFilterTokenForValues(field: string, values: string[]): string {
   const cleanValues = Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
   if (cleanValues.length === 0) return "";
@@ -745,6 +758,10 @@ function expandedFilterTokenForValues(field: string, values: string[]): string {
     return aliasFieldsForFilter(field).map((alias) => `${alias}:=${quoteValue(value)}`);
   }).flat();
   return `(${Array.from(new Set(tokens)).join(" OR ")})`;
+}
+
+function expandedNegativeFilterTokenForValues(field: string, values: string[]): string {
+  return negateToken(expandedFilterTokenForValues(field, values));
 }
 
 function stripAppliedFilterTokens(query: string, filters: AppliedFilter[]): string {
@@ -761,14 +778,19 @@ function buildQueryWithFilters(query: string, currentFilters: AppliedFilter[], n
   let nextQuery = stripAppliedFilterTokens(query, currentFilters);
   const grouped = new Map<string, AppliedFilter[]>();
   nextFilters.forEach((filter) => {
-    const group = grouped.get(filter.field) ?? [];
+    const key = `${filter.exclude ? "exclude" : "include"}:${filter.field}`;
+    const group = grouped.get(key) ?? [];
     group.push(filter);
-    grouped.set(filter.field, group);
+    grouped.set(key, group);
   });
 
   const filtersWithTokens: AppliedFilter[] = [];
-  grouped.forEach((group, field) => {
-    const token = filterTokenForValues(field, group.map((filter) => filter.value));
+  grouped.forEach((group) => {
+    const field = group[0]?.field ?? "";
+    const exclude = Boolean(group[0]?.exclude);
+    const token = exclude
+      ? negativeFilterTokenForValues(field, group.map((filter) => filter.value))
+      : filterTokenForValues(field, group.map((filter) => filter.value));
     if (!token) return;
     nextQuery = addFilterToQuery(nextQuery, token);
     group.forEach((filter) => filtersWithTokens.push({ ...filter, token }));
@@ -782,13 +804,18 @@ function queryWithExpandedFilters(query: string, filters: AppliedFilter[]): stri
   let nextQuery = stripAppliedFilterTokens(query, filters);
   const grouped = new Map<string, AppliedFilter[]>();
   filters.forEach((filter) => {
-    const group = grouped.get(filter.field) ?? [];
+    const key = `${filter.exclude ? "exclude" : "include"}:${filter.field}`;
+    const group = grouped.get(key) ?? [];
     group.push(filter);
-    grouped.set(filter.field, group);
+    grouped.set(key, group);
   });
 
-  grouped.forEach((group, field) => {
-    const token = expandedFilterTokenForValues(field, group.map((filter) => filter.value));
+  grouped.forEach((group) => {
+    const field = group[0]?.field ?? "";
+    const exclude = Boolean(group[0]?.exclude);
+    const token = exclude
+      ? expandedNegativeFilterTokenForValues(field, group.map((filter) => filter.value))
+      : expandedFilterTokenForValues(field, group.map((filter) => filter.value));
     if (token) nextQuery = addFilterToQuery(nextQuery, token);
   });
   return nextQuery;
@@ -1295,12 +1322,15 @@ function App() {
     return mergeFacetValues(field, facets[field], facetCache[field], rowFacetValues(field));
   }
 
-  function applyFilter(field: string, value: string) {
+  function applyFilter(field: string, value: string, exclude = false) {
     const cleanValue = value.trim();
     if (!field || !cleanValue) return;
     const displayValue = displayFacetValue(field, cleanValue);
-    if (appliedFilters.some((item) => item.field === field && item.value === displayValue)) return;
-    const nextFilters = [...appliedFilters, { field, value: displayValue, token: "" }];
+    if (appliedFilters.some((item) => item.field === field && item.value === displayValue && Boolean(item.exclude) === exclude)) return;
+    const nextFilters = [
+      ...appliedFilters.filter((item) => !(item.field === field && item.value === displayValue && Boolean(item.exclude) !== exclude)),
+      { field, value: displayValue, token: "", exclude }
+    ];
     const next = buildQueryWithFilters(draftQuery, appliedFilters, nextFilters);
     setDraftQuery(next.query);
     setAppliedFilters(next.filters);
@@ -1318,7 +1348,7 @@ function App() {
 
   function toggleFilter(field: string, value: string) {
     const displayValue = displayFacetValue(field, value);
-    const existing = appliedFilters.find((item) => item.field === field && item.value === displayValue);
+    const existing = appliedFilters.find((item) => item.field === field && item.value === displayValue && !item.exclude);
     if (existing) {
       removeFilter(existing);
       return;
@@ -1327,7 +1357,7 @@ function App() {
   }
 
   function removeFilter(filter: AppliedFilter) {
-    const nextFilters = appliedFilters.filter((item) => !(item.field === filter.field && item.value === filter.value));
+    const nextFilters = appliedFilters.filter((item) => !(item.field === filter.field && item.value === filter.value && Boolean(item.exclude) === Boolean(filter.exclude)));
     const next = buildQueryWithFilters(draftQuery, appliedFilters, nextFilters);
     setDraftQuery(next.query);
     setAppliedFilters(next.filters);
@@ -2007,9 +2037,9 @@ function App() {
               </button>
             )}
             {appliedFilters.map((filter) => (
-              <button key={`${filter.field}:${filter.value}`} onClick={() => removeFilter(filter)}>
+              <button key={`${filter.exclude ? "not:" : ""}${filter.field}:${filter.value}`} className={filter.exclude ? "exclude" : ""} onClick={() => removeFilter(filter)}>
                 <X size={12} />
-                <span>{filter.field}:{filter.value}</span>
+                <span>{filter.exclude ? "not " : ""}{filter.field}:{filter.value}</span>
               </button>
             ))}
           </div>
@@ -2246,6 +2276,9 @@ function App() {
                     <code>{asText(value)}</code>
                     <button title="Add filter" onClick={() => applyFilter(key, asText(value))}>
                       <Plus size={13} />
+                    </button>
+                    <button title="Exclude this value" onClick={() => applyFilter(key, asText(value), true)}>
+                      <Minus size={13} />
                     </button>
                   </div>
                 ))}
