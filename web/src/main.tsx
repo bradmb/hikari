@@ -1319,7 +1319,6 @@ function App() {
 
         <div className="facet-summary">
           <span>Showing {visibleFacetDefinitions.length} of {facetDefinitions.length}</span>
-          <button type="button" onClick={submitManualFilter}><Plus size={15} /> Add</button>
         </div>
 
         <section className="filter-panel">
