@@ -1640,104 +1640,80 @@ time {
 }
 
 
-/* Star Wars crawl — JS-driven continuous translate, no per-row entry animation. Top-anchored so new
-   rows extend the track downward without shifting existing rows. */
-.welcome-tail {
+/* Severity Constellation — a fixed starfield where each log event flashes a random star
+   in that severity's color (cyan info / amber warning / magenta error). */
+.welcome-constellation {
   position: absolute;
   inset: 0;
   z-index: 1;
   overflow: hidden;
   pointer-events: none;
-  display: flex;
-  align-items: flex-start;
-  justify-content: stretch;
-  perspective: 900px;
-  perspective-origin: 50% 100%;
-  overflow-anchor: none;
+  mask-image: radial-gradient(ellipse at 50% 55%, rgba(0,0,0,1) 40%, rgba(0,0,0,0.7) 75%, rgba(0,0,0,0.35) 100%);
+  -webkit-mask-image: radial-gradient(ellipse at 50% 55%, rgba(0,0,0,1) 40%, rgba(0,0,0,0.7) 75%, rgba(0,0,0,0.35) 100%);
 }
 
-.welcome-tail-track {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 100%;
-  padding: 100vh clamp(10px, 1.4vw, 24px) 100vh;
-  transform: translateY(0) rotateX(38deg);
-  transform-origin: 50% 100%;
-  will-change: transform;
-  filter: saturate(1.15) blur(0.4px);
-  mask-image: linear-gradient(
-    180deg,
-    transparent 0%,
-    rgba(0, 0, 0, 0.06) 17%,
-    rgba(0, 0, 0, 0.36) 38%,
-    rgba(0, 0, 0, 0.72) 61%,
-    rgba(0, 0, 0, 0.95) 83%,
-    rgba(0, 0, 0, 1) 100%
-  );
-  -webkit-mask-image: linear-gradient(
-    180deg,
-    transparent 0%,
-    rgba(0, 0, 0, 0.06) 17%,
-    rgba(0, 0, 0, 0.36) 38%,
-    rgba(0, 0, 0, 0.72) 61%,
-    rgba(0, 0, 0, 0.95) 83%,
-    rgba(0, 0, 0, 1) 100%
-  );
-  overflow-anchor: none;
+.welcome-constellation .star {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(225, 235, 250, 0.85);
+  box-shadow: 0 0 4px 0 rgba(180, 210, 240, 0.4);
+  opacity: var(--baseline-opacity, 0.5);
+  transform: translate(-50%, -50%);
+  animation: starTwinkle var(--twinkle-duration, 6s) ease-in-out infinite;
+  animation-delay: var(--twinkle-delay, 0s);
+  pointer-events: none;
+  will-change: opacity;
 }
 
-.tail-row {
-  display: grid;
-  grid-template-columns: 84px 230px minmax(0, 1fr);
-  gap: 24px;
-  align-items: center;
-  padding: 0 12px 0 8px;
-  border-left: 3px solid var(--sev-other);
-  background: rgba(24, 26, 31, 0.58);
-  color: var(--text);
-  font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12px;
-  line-height: 1.45;
-  white-space: nowrap;
-  overflow: hidden;
-  flex: 0 0 22px;
-  height: 22px;
-  overflow-anchor: none;
+@keyframes starTwinkle {
+  0%, 100% { opacity: calc(var(--baseline-opacity, 0.5) * 0.5); }
+  50%      { opacity: var(--baseline-opacity, 0.5); }
 }
 
-.tail-row.sev-error {
-  border-left-color: var(--sev-error);
-  background: rgba(50, 22, 22, 0.55);
-}
-.tail-row.sev-warning {
-  border-left-color: var(--sev-warning);
-  background: rgba(46, 36, 18, 0.55);
-}
-.tail-row.sev-info {
-  border-left-color: var(--sev-info);
-  background: rgba(20, 36, 44, 0.55);
-}
-.tail-row.sev-debug {
-  border-left-color: var(--sev-debug);
+/* Flash overrides the twinkle while active — a brief intense bloom in the severity color. */
+.welcome-constellation .star.flashing {
+  animation: starFlash 3s cubic-bezier(0.16, 0.8, 0.32, 1) forwards;
+  z-index: 2;
 }
 
-.tail-row span {
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
+@keyframes starFlash {
+  0% {
+    transform: translate(-50%, -50%) scale(1);
+    background: rgba(225, 235, 250, 0.85);
+    box-shadow: 0 0 4px 0 rgba(180, 210, 240, 0.4);
+    opacity: 0.5;
+  }
+  18% {
+    transform: translate(-50%, -50%) scale(2.4);
+    background: var(--flash-color, #6ed1ff);
+    box-shadow:
+      0 0 7px 1px color-mix(in srgb, var(--flash-color, #6ed1ff) 60%, transparent),
+      0 0 14px 3px color-mix(in srgb, var(--flash-color, #6ed1ff) 22%, transparent);
+    opacity: 0.7;
+  }
+  55% {
+    transform: translate(-50%, -50%) scale(1.5);
+    background: var(--flash-color, #6ed1ff);
+    box-shadow: 0 0 5px 1px color-mix(in srgb, var(--flash-color, #6ed1ff) 32%, transparent);
+    opacity: 0.55;
+  }
+  100% {
+    transform: translate(-50%, -50%) scale(1);
+    background: rgba(225, 235, 250, 0.85);
+    box-shadow: 0 0 4px 0 rgba(180, 210, 240, 0.4);
+    opacity: var(--baseline-opacity, 0.5);
+  }
 }
 
-.tail-row b {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text);
-}
+.welcome-constellation .star.flash-info    { --flash-color: #6ed1ff; }
+.welcome-constellation .star.flash-warning { --flash-color: #f5c074; }
+.welcome-constellation .star.flash-error   { --flash-color: #ff6aa6; }
+.welcome-constellation .star.flash-debug   { --flash-color: rgba(190, 210, 230, 0.85); }
+.welcome-constellation .star.flash-other   { --flash-color: rgba(190, 210, 230, 0.85); }
 
-.tail-row em {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--text-muted);
-  font-style: normal;
+@media (prefers-reduced-motion: reduce) {
+  .welcome-constellation .star { animation: none; opacity: var(--baseline-opacity, 0.5); }
+  .welcome-constellation .star.flashing { animation-duration: 2.4s; }
 }
 
 @keyframes welcomeFadeIn {

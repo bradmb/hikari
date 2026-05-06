@@ -657,7 +657,7 @@ function App() {
   const aiCloseTimerRef = useRef<number | null>(null);
   const tailSeenRef = useRef<Set<string>>(new Set());
   const tailQueueRef = useRef<LogRow[]>([]);
-  const tailTrackRef = useRef<HTMLDivElement | null>(null);
+  const constellationRef = useRef<HTMLDivElement | null>(null);
   const tailRecentRef = useRef<LogRow[]>([]);
 
   async function runSearch(nextQuery = draftQuery, options: { relaxIfEmpty?: boolean } = {}) {
@@ -997,103 +997,95 @@ function App() {
       rows.forEach((row) => {
         seen.add(`${timeValue(row)}|${message(row)}`);
       });
+      // Sort the most-recent batch ascending by time so older comes out of the queue first; that way
+      // the track ends up with oldest at the top of the column and newest at the bottom (= visual
+      // bottom near the viewport floor, with newer rows scrolling up off the top over time).
       const seedCount = Math.min(rows.length, 40);
-      const seed: LogRow[] = [];
-      for (let i = seedCount - 1; i >= 0; i -= 1) {
-        seed.push(rows[i]);
-      }
+      const seed = rows.slice(0, seedCount * 2)
+        .sort((a, b) => rowTimestamp(a) - rowTimestamp(b))
+        .slice(-seedCount);
       tailRecentRef.current = seed;
       tailQueueRef.current.push(...seed);
       return;
     }
 
-    for (let i = rows.length - 1; i >= 0; i -= 1) {
-      const row = rows[i];
+    const newOnes: LogRow[] = [];
+    for (const row of rows) {
       const key = `${timeValue(row)}|${message(row)}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      tailQueueRef.current.push(row);
+      newOnes.push(row);
     }
+    if (newOnes.length === 0) return;
+    newOnes.sort((a, b) => rowTimestamp(a) - rowTimestamp(b));
+    tailQueueRef.current.push(...newOnes);
     if (tailQueueRef.current.length > 200) {
       tailQueueRef.current = tailQueueRef.current.slice(-200);
     }
   }, [rows]);
 
-  // Direct-DOM tail crawl with continuous RAF-driven smooth scroll.
-  // - Track is top-anchored. New rows are appended at the bottom of the column → they appear in the
-  //   100vh of bottom padding (off-screen below the viewport). No layout shift on existing rows.
-  // - RAF continuously increases `translateUp` at a fixed rate → track translates upward smoothly.
-  //   New rows scroll up into view from below.
-  // - When the buffer hits MAX_ROWS, the oldest row (already off-screen above) is removed and
-  //   `translateUp` is decremented by 26 in the same task to compensate the layout shift.
+  // Severity Constellation — fixed starfield. Stars are positioned randomly on mount and
+  // gently twinkle. When a log event arrives, a random star flashes briefly in that severity's
+  // color (cyan info / amber warning / magenta error). Reads as "the sky reacts to activity".
   useEffect(() => {
-    const MAX_ROWS = 100;
-    const INTERVAL_MS = 560;
-    const SCROLL_PX_PER_SEC = 46;
-    const ROW_STRIDE = 26;
-    let translateUp = 0;
-    let lastTime = 0;
-    let rafId = 0;
-
-    function applyTransform() {
-      const track = tailTrackRef.current;
-      if (!track) return;
-      track.style.transform = `translateY(${-translateUp}px) rotateX(38deg)`;
+    const field = constellationRef.current;
+    if (!field) return;
+    const STAR_COUNT = 220;
+    // Clear any prior children (HMR safety)
+    while (field.firstChild) field.removeChild(field.firstChild);
+    for (let i = 0; i < STAR_COUNT; i++) {
+      const s = document.createElement("div");
+      s.className = "star";
+      s.style.top = `${Math.random() * 100}%`;
+      s.style.left = `${Math.random() * 100}%`;
+      const size = 1.4 + Math.random() * 2.2;
+      s.style.width = `${size}px`;
+      s.style.height = `${size}px`;
+      s.style.setProperty("--twinkle-duration", `${4 + Math.random() * 6}s`);
+      s.style.setProperty("--twinkle-delay", `${Math.random() * 8}s`);
+      // baseline brightness variance
+      s.style.setProperty("--baseline-opacity", `${0.25 + Math.random() * 0.5}`);
+      field.append(s);
     }
+  }, []);
 
-    function buildRow(row: LogRow): HTMLDivElement {
-      const sev = severityKey(levelValue(row));
-      const div = document.createElement("div");
-      div.className = `tail-row sev-${sev}`;
+  useEffect(() => {
+    const INTERVAL_MS = 520;
 
-      const time = document.createElement("span");
-      time.textContent = localTimeValue(row).split("  ")[1] ?? "";
-
-      const service = document.createElement("b");
-      service.textContent = serviceValue(row) || envValue(row) || "log";
-
-      const msg = document.createElement("em");
-      msg.textContent = message(row);
-
-      div.append(time, service, msg);
-      div.dataset.key = `${timeValue(row)}|${message(row)}`;
-      return div;
+    function flashRandom(sev: string) {
+      const field = constellationRef.current;
+      if (!field) return;
+      const all = field.querySelectorAll<HTMLDivElement>(".star");
+      if (all.length === 0) return;
+      // Find a star not already flashing — try up to 6 picks
+      let target: HTMLDivElement | null = null;
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const candidate = all[Math.floor(Math.random() * all.length)];
+        if (!candidate.classList.contains("flashing")) {
+          target = candidate;
+          break;
+        }
+      }
+      if (!target) return;
+      target.classList.add("flashing", `flash-${sev}`);
+      const onEnd = () => {
+        target!.classList.remove("flashing", `flash-${sev}`);
+        target!.removeEventListener("animationend", onEnd);
+      };
+      target.addEventListener("animationend", onEnd);
     }
 
     function drain() {
-      const track = tailTrackRef.current;
-      if (!track) return;
       if (tailQueueRef.current.length === 0) return;
       const next = tailQueueRef.current.shift();
       if (!next) return;
-
-      track.append(buildRow(next));
-
-      while (track.children.length > MAX_ROWS) {
-        const oldest = track.firstElementChild as HTMLElement | null;
-        if (!oldest) break;
-        const key = oldest.dataset.key;
-        if (key) tailSeenRef.current.delete(key);
-        oldest.remove();
-        translateUp -= ROW_STRIDE;
-      }
-      applyTransform();
+      const sev = severityKey(levelValue(next));
+      flashRandom(sev);
     }
 
-    function tick(now: number) {
-      if (lastTime === 0) lastTime = now;
-      const dt = Math.min((now - lastTime) / 1000, 0.1);
-      lastTime = now;
-      translateUp += SCROLL_PX_PER_SEC * dt;
-      applyTransform();
-      rafId = window.requestAnimationFrame(tick);
-    }
-
-    rafId = window.requestAnimationFrame(tick);
     const interval = window.setInterval(drain, INTERVAL_MS);
     return () => {
       window.clearInterval(interval);
-      window.cancelAnimationFrame(rafId);
     };
   }, []);
 
@@ -1417,9 +1409,7 @@ function App() {
 
     {mode === "welcome" && (
       <div className="welcome" role="dialog" aria-label="Ask Hikari">
-        <div className="welcome-tail" aria-hidden="true">
-          <div className="welcome-tail-track" ref={tailTrackRef} />
-        </div>
+        <div className="welcome-constellation" ref={constellationRef} aria-hidden="true" />
         <header className="welcome-chrome">
           <div className="product">
             <div className="mark" aria-label="Hikari"><HikariSparkle size={20} /></div>
