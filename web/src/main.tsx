@@ -446,12 +446,86 @@ function formatChartTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
 
+function formatBucketTime(timestamp: number, stepMs: number): string {
+  const options: Intl.DateTimeFormatOptions = stepMs >= 24 * 60 * 60 * 1000
+    ? { month: "short", day: "numeric" }
+    : stepMs >= 60 * 60 * 1000
+      ? { month: "short", day: "numeric", hour: "2-digit" }
+      : { hour: "2-digit", minute: "2-digit" };
+  return new Date(timestamp).toLocaleString([], options);
+}
+
 function formatTimeWindow(window: QueryWindow): string {
   if (!window.start || !window.end) return "";
   const start = Date.parse(window.start);
   const end = Date.parse(window.end);
   if (Number.isNaN(start) || Number.isNaN(end)) return "";
   return `${formatChartTime(start)} to ${formatChartTime(end)}`;
+}
+
+function parseDurationMs(value: string): number | null {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)(ms|s|m|h|d|w)$/i);
+  if (!match) return null;
+  const amount = Number(match[1]);
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  const unit = match[2].toLowerCase();
+  const unitMs: Record<string, number> = {
+    ms: 1,
+    s: 1000,
+    m: 60 * 1000,
+    h: 60 * 60 * 1000,
+    d: 24 * 60 * 60 * 1000,
+    w: 7 * 24 * 60 * 60 * 1000
+  };
+  return amount * unitMs[unit];
+}
+
+function durationToken(ms: number): string {
+  const minutes = Math.max(1, Math.round(ms / (60 * 1000)));
+  if (minutes % (7 * 24 * 60) === 0) return `${minutes / (7 * 24 * 60)}w`;
+  if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)}d`;
+  if (minutes % 60 === 0) return `${minutes / 60}h`;
+  return `${minutes}m`;
+}
+
+function timeRangeForQuery(query: string, window: QueryWindow): { start: number; end: number } {
+  const windowStart = window.start ? Date.parse(window.start) : NaN;
+  const windowEnd = window.end ? Date.parse(window.end) : NaN;
+  if (!Number.isNaN(windowStart) && !Number.isNaN(windowEnd) && windowEnd > windowStart) {
+    return { start: windowStart, end: windowEnd };
+  }
+  const duration = parseDurationMs(timeToken(query).replace("_time:", "")) ?? 15 * 60 * 1000;
+  const end = Date.now();
+  return { start: end - duration, end };
+}
+
+function histogramStepMs(query: string, window: QueryWindow): number {
+  const range = timeRangeForQuery(query, window);
+  const span = Math.max(60 * 1000, range.end - range.start);
+  const steps = [
+    60 * 1000,
+    2 * 60 * 1000,
+    5 * 60 * 1000,
+    10 * 60 * 1000,
+    15 * 60 * 1000,
+    30 * 60 * 1000,
+    60 * 60 * 1000,
+    2 * 60 * 60 * 1000,
+    6 * 60 * 60 * 1000,
+    12 * 60 * 60 * 1000,
+    24 * 60 * 60 * 1000
+  ];
+  return steps.find((step) => Math.ceil(span / step) <= 72) ?? steps[steps.length - 1];
+}
+
+function hitTimestamp(hit: Record<string, unknown>): number {
+  const raw = hit.timestamp ?? hit.time ?? hit._time;
+  if (typeof raw === "number") return raw > 100000000000 ? raw : raw * 1000;
+  if (typeof raw === "string") {
+    const parsed = Date.parse(normalizeIsoTimestamp(raw));
+    return Number.isNaN(parsed) ? NaN : parsed;
+  }
+  return NaN;
 }
 
 function timeToken(query: string): string {
@@ -949,6 +1023,8 @@ function App() {
   const [aiRelaxations, setAiRelaxations] = useState<string[]>([]);
   const [rows, setRows] = useState<LogRow[]>([]);
   const [hits, setHits] = useState<Array<Record<string, unknown>>>([]);
+  const [hitStepMs, setHitStepMs] = useState(histogramStepMs(initialLogState.query, initialLogState.window));
+  const [hitRange, setHitRange] = useState(() => timeRangeForQuery(initialLogState.query, initialLogState.window));
   const [fieldMappings, setFieldMappings] = useState<FieldMappings>(emptyFieldMappings);
   const [configReady, setConfigReady] = useState(false);
   const [fields, setFields] = useState<string[]>([]);
@@ -1076,6 +1152,8 @@ function App() {
       let activeQuery = nextQuery;
       let backendQuery = queryWithExpandedFilters(activeQuery, activeFilters);
       let searchResult = await searchLogs(backendQuery, 500, activeWindow);
+      let activeHitStepMs = histogramStepMs(activeQuery, activeWindow);
+      let activeHitRange = timeRangeForQuery(activeQuery, activeWindow);
       const relaxations: string[] = [];
       if (options.relaxIfEmpty) {
         let attempts = 0;
@@ -1085,12 +1163,14 @@ function App() {
           relaxations.push(relaxed);
           activeQuery = relaxed;
           backendQuery = queryWithExpandedFilters(activeQuery, activeFilters);
+          activeHitStepMs = histogramStepMs(activeQuery, activeWindow);
+          activeHitRange = timeRangeForQuery(activeQuery, activeWindow);
           searchResult = await searchLogs(backendQuery, 500, activeWindow);
           attempts += 1;
         }
       }
       const [hitResult, fieldResult] = await Promise.all([
-        getHits(backendQuery, "1m", activeWindow),
+        getHits(backendQuery, durationToken(activeHitStepMs), activeWindow),
         getFields(backendQuery, activeWindow)
       ]);
       const nextRows = searchResult.rows.length ? searchResult.rows : [];
@@ -1104,6 +1184,8 @@ function App() {
       }
       setQuery(activeQuery);
       setTimeWindow(activeWindow);
+      setHitStepMs(activeHitStepMs);
+      setHitRange(activeHitRange);
       if (relaxations.length === 0) setDraftQuery(activeQuery);
       if (mode === "explore") {
         updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery, activeFilters, activeWindow);
@@ -1375,48 +1457,37 @@ function App() {
   }, [live, query, appliedFilters, mode, timeWindow]);
 
   const histogram = useMemo(() => {
-    const buckets = 60;
-    const times = rows.map(rowTimestamp).filter((value) => !Number.isNaN(value));
-    if (times.length === 0) return [];
-    const windowStart = timeWindow.start ? Date.parse(timeWindow.start) : NaN;
-    const windowEnd = timeWindow.end ? Date.parse(timeWindow.end) : NaN;
-    const minTime = !Number.isNaN(windowStart) && !Number.isNaN(windowEnd) ? windowStart : Math.min(...times);
-    const maxTime = !Number.isNaN(windowStart) && !Number.isNaN(windowEnd) ? windowEnd : Math.max(...times);
-    const span = Math.max(1000, maxTime - minTime);
-    const step = span / buckets;
-    const counts: Array<{ error: number; warning: number; info: number; other: number }> = Array.from(
-      { length: buckets },
-      () => ({ error: 0, warning: 0, info: 0, other: 0 })
-    );
-    rows.forEach((row) => {
-      const t = rowTimestamp(row);
+    const step = Math.max(60 * 1000, hitStepMs);
+    const bucketCount = Math.max(1, Math.min(120, Math.ceil((hitRange.end - hitRange.start) / step)));
+    const minTime = hitRange.end - bucketCount * step;
+    const totals = Array.from({ length: bucketCount }, () => 0);
+
+    hits.forEach((hit) => {
+      const t = hitTimestamp(hit);
       if (Number.isNaN(t)) return;
-      const idx = Math.min(buckets - 1, Math.max(0, Math.floor((t - minTime) / step)));
-      const key = severityKey(levelValue(row));
-      if (key === "error") counts[idx].error += 1;
-      else if (key === "warning") counts[idx].warning += 1;
-      else if (key === "info") counts[idx].info += 1;
-      else counts[idx].other += 1;
+      const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((t - minTime) / step)));
+      totals[idx] += countFromHit(hit);
     });
-    const totals = counts.map((c) => c.error + c.warning + c.info + c.other);
+
     const maxTotal = Math.max(1, ...totals);
-    return counts.map((c, i) => {
-      const total = totals[i];
+    return totals.map((total, i) => {
       const height = total === 0 ? 0 : Math.max(3, Math.round((total / maxTotal) * 72));
+      const startTime = minTime + i * step;
+      const endTime = startTime + step;
       return {
         key: i,
         total,
         height,
-        startTime: minTime + i * step,
-        endTime: minTime + (i + 1) * step,
-        error: total ? (c.error / total) * 100 : 0,
-        warning: total ? (c.warning / total) * 100 : 0,
-        info: total ? (c.info / total) * 100 : 0,
-        other: total ? (c.other / total) * 100 : 0,
-        label: `${total} logs from ${formatChartTime(minTime + i * step)} to ${formatChartTime(minTime + (i + 1) * step)}`
+        startTime,
+        endTime,
+        error: 0,
+        warning: 0,
+        info: total ? 100 : 0,
+        other: 0,
+        label: `${total} logs from ${formatBucketTime(startTime, step)} to ${formatBucketTime(endTime, step)}`
       };
     });
-  }, [rows, timeWindow]);
+  }, [hits, hitRange, hitStepMs]);
 
   const selectedHistogramRange = dragRange && histogram.length
     ? {
@@ -2010,7 +2081,7 @@ function App() {
           {hoveredBucket !== null && histogram[hoveredBucket] && (
             <div className="histogram-tooltip" style={{ left: `${((hoveredBucket + 0.5) / histogram.length) * 100}%` }}>
               <strong>{histogram[hoveredBucket].total} logs</strong>
-              <span>{formatChartTime(histogram[hoveredBucket].startTime)} - {formatChartTime(histogram[hoveredBucket].endTime)}</span>
+              <span>{formatBucketTime(histogram[hoveredBucket].startTime, hitStepMs)} - {formatBucketTime(histogram[hoveredBucket].endTime, hitStepMs)}</span>
             </div>
           )}
         </section>
