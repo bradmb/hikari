@@ -16,7 +16,7 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { generateQuery, getAppConfig, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiStep, type FieldMappings, type LogRow, type QueryWindow, type ValueHit } from "./api";
+import { generateQuery, getAppConfig, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiStep, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
 import "./styles.css";
 
 const emptyFieldMappings: FieldMappings = { defaultFields: [], aliases: {}, facets: [] };
@@ -528,6 +528,19 @@ function hitTimestamp(hit: Record<string, unknown>): number {
   return NaN;
 }
 
+function normalizeHitBuckets(result: HitsResponse): HitBucket[] {
+  if (Array.isArray(result.values)) return result.values;
+  return (result.hits ?? []).flatMap((series) => {
+    const timestamps = series.timestamps ?? [];
+    const values = series.values ?? [];
+    return timestamps.map((timestamp, index) => ({
+      ...(series.fields ?? {}),
+      timestamp,
+      hits: values[index] ?? 0
+    }));
+  });
+}
+
 function timeToken(query: string): string {
   return query.match(/\b_time:[^\s)]+/)?.[0] ?? defaultLogQuery;
 }
@@ -1022,7 +1035,7 @@ function App() {
   const [aiEvidence, setAiEvidence] = useState<string[]>([]);
   const [aiRelaxations, setAiRelaxations] = useState<string[]>([]);
   const [rows, setRows] = useState<LogRow[]>([]);
-  const [hits, setHits] = useState<Array<Record<string, unknown>>>([]);
+  const [hits, setHits] = useState<HitBucket[]>([]);
   const [hitStepMs, setHitStepMs] = useState(histogramStepMs(initialLogState.query, initialLogState.window));
   const [hitRange, setHitRange] = useState(() => timeRangeForQuery(initialLogState.query, initialLogState.window));
   const [fieldMappings, setFieldMappings] = useState<FieldMappings>(emptyFieldMappings);
@@ -1191,7 +1204,7 @@ function App() {
         updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery, activeFilters, activeWindow);
       }
       setAiRelaxations(relaxations);
-      setHits(hitResult.values ?? []);
+      setHits(normalizeHitBuckets(hitResult));
       const nextFields = (fieldResult.values ?? [])
         .map((item) => item.value.trim())
         .filter(Boolean)

@@ -10,6 +10,18 @@ export type ValueHit = {
   hits: number;
 };
 
+export type HitBucket = Record<string, unknown>;
+
+export type HitsResponse = {
+  values?: HitBucket[];
+  hits?: Array<{
+    fields?: Record<string, unknown>;
+    timestamps?: Array<string | number>;
+    values?: Array<number | string>;
+    total?: number;
+  }>;
+};
+
 export type AiStep = {
   title: string;
   status: "pending" | "running" | "done" | "error";
@@ -73,7 +85,7 @@ export function searchLogs(query: string, limit = 500, window?: QueryWindow) {
 }
 
 export function getHits(query: string, step = "1m", window?: QueryWindow) {
-  return request<{ values?: Array<Record<string, unknown>> }>("/api/hits", {
+  return request<HitsResponse>("/api/hits", {
     method: "POST",
     body: JSON.stringify({ query, step, ...windowPayload(window) })
   });
