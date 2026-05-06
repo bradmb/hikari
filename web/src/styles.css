@@ -692,7 +692,7 @@ summary svg {
 }
 
 .facet-list button {
-  width: 100%;
+  width: calc(100% - 8px);
   min-width: 0;
   height: 26px;
   display: grid;
@@ -706,6 +706,7 @@ summary svg {
   text-align: left;
   cursor: pointer;
   border-radius: 0;
+  margin-right: 8px;
 }
 
 .facet-list button:hover {
@@ -759,7 +760,7 @@ summary svg {
   font-style: normal;
   font-variant-numeric: tabular-nums;
   justify-self: end;
-  min-width: 34px;
+  min-width: 42px;
   text-align: right;
 }
 
