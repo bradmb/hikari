@@ -477,6 +477,7 @@ button {
     var(--bg-app);
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-gutter: stable;
   position: relative;
 }
 
@@ -695,13 +696,13 @@ summary svg {
   min-width: 0;
   height: 26px;
   display: grid;
-  grid-template-columns: 14px 4px minmax(0, 1fr) 48px;
+  grid-template-columns: 14px 4px minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   border: 0;
   background: transparent;
   color: var(--text);
-  padding: 0 34px 0 22px;
+  padding: 0 14px 0 22px;
   text-align: left;
   cursor: pointer;
   border-radius: 0;
@@ -758,7 +759,7 @@ summary svg {
   font-style: normal;
   font-variant-numeric: tabular-nums;
   justify-self: end;
-  min-width: 0;
+  min-width: 34px;
   text-align: right;
 }
 
