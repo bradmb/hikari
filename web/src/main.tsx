@@ -57,33 +57,6 @@ const aiProgressTemplate: AiStep[] = [
   }
 ];
 
-const sampleRows: LogRow[] = [
-  {
-    _time: "2026-05-01T18:14:12Z",
-    level: "Error",
-    service: "api",
-    host: "eks-api-74b7",
-    status: 500,
-    _msg: "Request failed while loading customer document metadata"
-  },
-  {
-    _time: "2026-05-01T18:13:45Z",
-    level: "Information",
-    service: "worker",
-    host: "eks-worker-1d2f",
-    status: 200,
-    _msg: "Completed nightly disclosure package refresh"
-  },
-  {
-    _time: "2026-05-01T18:12:03Z",
-    level: "Warning",
-    service: "portal",
-    host: "eks-portal-8a11",
-    status: 429,
-    _msg: "Client throttled by downstream LOS API"
-  }
-];
-
 type AppliedFilter = {
   field: string;
   value: string;
@@ -974,7 +947,7 @@ function App() {
   const [aiExplanation, setAiExplanation] = useState("");
   const [aiEvidence, setAiEvidence] = useState<string[]>([]);
   const [aiRelaxations, setAiRelaxations] = useState<string[]>([]);
-  const [rows, setRows] = useState<LogRow[]>(sampleRows);
+  const [rows, setRows] = useState<LogRow[]>([]);
   const [hits, setHits] = useState<Array<Record<string, unknown>>>([]);
   const [fieldMappings, setFieldMappings] = useState<FieldMappings>(emptyFieldMappings);
   const [configReady, setConfigReady] = useState(false);
@@ -2055,6 +2028,11 @@ function App() {
           <div className="log-header">
             {logColumns.columns.map((column) => <span key={column.key}>{column.label}</span>)}
           </div>
+          {rows.length === 0 && (
+            <div className="log-empty">
+              {loading ? "Loading logs..." : "No logs match the current query."}
+            </div>
+          )}
           {rows.map((row, index) => (
             <div
               key={`${timeValue(row)}-${index}`}

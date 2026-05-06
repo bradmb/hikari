@@ -1131,6 +1131,15 @@ summary svg {
   background: var(--bg-row-hover);
 }
 
+.log-empty {
+  min-height: 120px;
+  display: grid;
+  place-items: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
 .log-row.selected {
   background: linear-gradient(90deg,
     rgba(95, 225, 255, 0.08) 0%,
