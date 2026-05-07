@@ -65,6 +65,7 @@ def config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
         "default_query": settings.default_query,
         "fieldMappings": get_field_mappings(settings),
+        "facetPreviewLimit": settings.facet_preview_limit,
         "aiEnabled": ai_enabled(settings),
     }
 

@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     )
     field_mappings_file: str = Field("config/field-mappings.json", alias="HIKARI_FIELD_MAPPINGS_FILE")
     field_mappings: dict[str, Any] = Field(default_factory=dict, alias="HIKARI_FIELD_MAPPINGS")
+    facet_preview_limit: int = Field(10, alias="HIKARI_FACET_PREVIEW_LIMIT", ge=1, le=250)
     openai_api_key: str = Field("", alias="OPENAI_API_KEY")
     openai_api_key_secret_id: str = Field("", alias="HIKARI_OPENAI_API_KEY_SECRET_ID")
     openai_model: str = Field("gpt-5.4-mini", alias="HIKARI_OPENAI_MODEL")

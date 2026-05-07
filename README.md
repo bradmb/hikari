@@ -56,6 +56,7 @@ Common environment variables:
 - `HIKARI_DEFAULT_FIELDS`: comma-separated fields to surface in the UI.
 - `HIKARI_FIELD_MAPPINGS_FILE`: JSON file that defines canonical fields, aliases, and default facets.
 - `HIKARI_FIELD_MAPPINGS`: optional inline JSON override for field mappings.
+- `HIKARI_FACET_PREVIEW_LIMIT`: number of facet values shown before a `View more` expander appears. Defaults to `10`.
 - `OPENAI_API_KEY`: optional, enables natural-language query generation.
 - `HIKARI_OPENAI_MODEL`: model used for natural-language query generation.
 - `HIKARI_MCP_ALLOWED_HOSTS`: optional comma-separated Host header allowlist for MCP DNS rebinding protection.

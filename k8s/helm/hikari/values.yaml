@@ -23,6 +23,7 @@ env:
   awsRegion: us-east-1
   victoriaUrl: http://victorialogs.example.svc:9428
   fieldMappingsFile: /app/config/field-mappings.json
+  facetPreviewLimit: 10
   openAiSecretId: kubernetes/hikari/openai
   openAiSecretName: ""
   openAiSecretKey: OPENAI_API_KEY

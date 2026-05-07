@@ -729,6 +729,22 @@ summary svg {
   background: var(--bg-row-hover);
 }
 
+.facet-list button.facet-view-more {
+  grid-template-columns: minmax(0, 1fr) auto;
+  height: 28px;
+  color: var(--hikari-cyan);
+  font-weight: 600;
+}
+
+.facet-list button.facet-view-more span {
+  padding-left: 22px;
+}
+
+.facet-list button.facet-view-more em {
+  min-width: 0;
+  color: var(--text-dim);
+}
+
 .facet-list button input {
   pointer-events: none;
 }
@@ -2360,6 +2376,7 @@ time {
 .welcome-stats .dot.error::before { background: var(--sev-error); }
 .welcome-stats .dot.warning::before { background: var(--sev-warning); }
 .welcome-stats .dot.info::before { background: var(--sev-info); }
+.welcome-stats .dot.unclassified::before { background: var(--sev-debug); }
 
 /* === AI Answer view === */
 
@@ -2857,6 +2874,7 @@ time {
 .answer-stats .dot.error::before { background: var(--sev-error); }
 .answer-stats .dot.warning::before { background: var(--sev-warning); }
 .answer-stats .dot.info::before { background: var(--sev-info); }
+.answer-stats .dot.unclassified::before { background: var(--sev-debug); }
 
 .answer-samples {
   display: grid;

@@ -100,6 +100,8 @@ Keep secrets out of committed files.
 
 Hikari resolves display columns, facets, MCP summaries, and hidden query alias expansion from `config/field-mappings.json`. This file is the place to adapt Hikari to your log schema.
 
+Set `HIKARI_FACET_PREVIEW_LIMIT` to control how many values each facet shows before the UI displays a `View more` expander. The default is `10`.
+
 The mapping has three parts:
 
 - `defaultFields`: fields shown first in manual field selectors and field discovery.
@@ -219,6 +221,7 @@ helm upgrade --install hikari ./k8s/helm/hikari `
   --values ./hikari-values.yaml `
   --set image.repository=ghcr.io/bradmb/hikari `
   --set-string image.tag=latest `
+  --set env.facetPreviewLimit=10 `
   --set env.victoriaUrl=http://victorialogs.example.svc:9428
 ```
 

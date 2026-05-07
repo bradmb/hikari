@@ -233,6 +233,7 @@ def test_config_reports_ai_disabled_without_openai_key():
         response = test_client.get("/api/config")
     assert response.status_code == 200
     assert response.json()["aiEnabled"] is False
+    assert response.json()["facetPreviewLimit"] == 10
 
 
 def test_configured_facet_aliases_copy_host_and_service_names():

@@ -298,12 +298,30 @@ type Mood = {
   label: string;
 };
 
+type SeverityCounts = {
+  error: number;
+  warning: number;
+  info: number;
+  debug: number;
+  other: number;
+};
+
+type SeverityStats = {
+  counts: SeverityCounts;
+  classifiedTotal: number;
+  source: "facet" | "rows";
+};
+
+function emptySeverityCounts(): SeverityCounts {
+  return { error: 0, warning: 0, info: 0, debug: 0, other: 0 };
+}
+
 function deriveMood(rows: LogRow[]): Mood {
   if (rows.length < 5) {
     return { hue: 188, saturation: 48, intensity: 0.35, label: "calm" };
   }
   const total = rows.length;
-  const counts = { error: 0, warning: 0, info: 0, debug: 0, other: 0 };
+  const counts = emptySeverityCounts();
   rows.forEach((row) => {
     counts[severityKey(levelValue(row))] += 1;
   });
@@ -1130,9 +1148,11 @@ function App() {
   const [fieldMappings, setFieldMappings] = useState<FieldMappings>(emptyFieldMappings);
   const [configReady, setConfigReady] = useState(false);
   const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
+  const [facetPreviewLimit, setFacetPreviewLimit] = useState(10);
   const [fields, setFields] = useState<string[]>([]);
   const [facets, setFacets] = useState<Record<string, ValueHit[]>>({});
   const [facetCache, setFacetCache] = useState<Record<string, ValueHit[]>>({});
+  const [expandedFacets, setExpandedFacets] = useState<Set<string>>(() => new Set());
   const [facetSearch, setFacetSearch] = useState("");
   const [selected, setSelected] = useState<LogRow | null>(null);
   const [appliedFilters, setAppliedFilters] = useState<AppliedFilter[]>(initialLogState.filters);
@@ -1489,6 +1509,7 @@ function App() {
         setActiveFieldMappings(config.fieldMappings);
         setFieldMappings(config.fieldMappings);
         setFields(config.fieldMappings.defaultFields);
+        setFacetPreviewLimit(Math.max(1, Math.min(250, Math.floor(config.facetPreviewLimit ?? 10))));
         setAiEnabled(config.aiEnabled);
         if (!config.aiEnabled && mode !== "explore") setMode("explore");
         setConfigReady(true);
@@ -1876,20 +1897,23 @@ function App() {
     return rows.length.toLocaleString();
   }, [hits, rows]);
 
-  const severityCounts = useMemo(() => {
-    const counts = { error: 0, warning: 0, info: 0, debug: 0, other: 0 };
+  const severityStats = useMemo<SeverityStats>(() => {
+    const counts = emptySeverityCounts();
     const levelFacet = facets.level;
     if (levelFacet && levelFacet.length > 0) {
       levelFacet.forEach((item) => {
         counts[severityKey(item.value)] += item.hits;
       });
-      return counts;
+      return { counts, classifiedTotal: levelFacet.reduce((sum, item) => sum + item.hits, 0), source: "facet" };
     }
     rows.forEach((row) => {
       counts[severityKey(levelValue(row))] += 1;
     });
-    return counts;
+    return { counts, classifiedTotal: rows.length, source: "rows" };
   }, [rows, facets]);
+  const severityCounts = severityStats.counts;
+  const unclassifiedSeverityCount = Math.max(0, totalLogs - severityStats.classifiedTotal);
+  const showUnclassifiedSeverity = severityStats.source === "facet" && unclassifiedSeverityCount > 0;
 
   function runSuggestion(prompt: string) {
     void askAi(prompt);
@@ -1943,6 +1967,14 @@ function App() {
     if (!term) return values;
     if (field.toLowerCase().includes(term) || label.toLowerCase().includes(term)) return values;
     return values.filter((item) => item.value.toLowerCase().includes(term));
+  }
+
+  function expandFacet(field: string) {
+    setExpandedFacets((current) => {
+      const next = new Set(current);
+      next.add(field);
+      return next;
+    });
   }
 
   function handleEntityClick(kind: EntityKind, value: string) {
@@ -2124,13 +2156,16 @@ function App() {
               {visibleFacetDefinitions.map(({ field, label }) => {
                 const values = visibleValuesForField(field, label);
                 if (values.length === 0) return null;
+                const expanded = expandedFacets.has(field) || Boolean(facetSearch.trim());
+                const visibleValues = expanded ? values.slice(0, 250) : values.slice(0, facetPreviewLimit);
+                const hiddenCount = Math.max(0, Math.min(values.length, 250) - visibleValues.length);
                 return (
                   <details key={field} open={Boolean(facetSearch.trim()) || ["environment", "service", "host", "level"].includes(field)}>
                     <summary>
                       <span>{label}</span>
                       <CheckCircle2 size={13} />
                     </summary>
-                  {values.slice(0, 250).map((item) => (
+                    {visibleValues.map((item) => (
                       <button key={`${field}-${item.value}`} onClick={() => toggleFilter(field, item.value)}>
                         <input type="checkbox" checked={appliedFilters.some((filter) => filter.field === field && filter.value === item.value)} readOnly />
                         <i className={`facet-swatch ${field === "level" ? item.value.toLowerCase() : ""}`} />
@@ -2138,6 +2173,12 @@ function App() {
                         <em>{item.hits}</em>
                       </button>
                     ))}
+                    {!expanded && hiddenCount > 0 && (
+                      <button className="facet-view-more" onClick={() => expandFacet(field)}>
+                        <span>View more</span>
+                        <em>+{hiddenCount}</em>
+                      </button>
+                    )}
                   </details>
                 );
               })}
@@ -2402,6 +2443,11 @@ function App() {
             <span className="dot error">{severityCounts.error.toLocaleString()} errors</span>
             <span className="dot warning">{severityCounts.warning.toLocaleString()} warnings</span>
             <span className="dot info">{severityCounts.info.toLocaleString()} info</span>
+            {showUnclassifiedSeverity && (
+              <span className="dot unclassified" title="Logs without a recognized level field">
+                {unclassifiedSeverityCount.toLocaleString()} unclassified
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -2466,6 +2512,11 @@ function App() {
                 <span className="dot error">{severityCounts.error.toLocaleString()} errors</span>
                 <span className="dot warning">{severityCounts.warning.toLocaleString()} warnings</span>
                 <span className="dot info">{severityCounts.info.toLocaleString()} info</span>
+                {showUnclassifiedSeverity && (
+                  <span className="dot unclassified" title="Logs without a recognized level field">
+                    {unclassifiedSeverityCount.toLocaleString()} unclassified
+                  </span>
+                )}
               </div>
             </div>
 

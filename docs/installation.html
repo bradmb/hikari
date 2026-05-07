@@ -110,6 +110,7 @@ docker compose up mock-victorialogs api web</code></pre>
               <div role="row"><code>HIKARI_VICTORIA_HEADERS</code><span>Optional JSON object of extra headers for VictoriaLogs.</span></div>
               <div role="row"><code>HIKARI_FIELD_MAPPINGS_FILE</code><span>JSON file that defines canonical fields, facet aliases, and sidebar facets.</span></div>
               <div role="row"><code>HIKARI_FIELD_MAPPINGS</code><span>Optional inline JSON override for field mappings.</span></div>
+              <div role="row"><code>HIKARI_FACET_PREVIEW_LIMIT</code><span>Number of values shown per facet before the <code>View more</code> expander appears. Defaults to <code>10</code>.</span></div>
               <div role="row"><code>OPENAI_API_KEY</code><span>Optional key for natural-language query generation.</span></div>
               <div role="row"><code>HIKARI_OPENAI_API_KEY_SECRET_ID</code><span>Optional secret ID for loading the OpenAI API key at runtime.</span></div>
               <div role="row"><code>HIKARI_OPENAI_MODEL</code><span>Model used for natural-language query generation.</span></div>
@@ -121,6 +122,10 @@ docker compose up mock-victorialogs api web</code></pre>
             <p>
               Hikari adapts to your log schema through <code>config/field-mappings.json</code>. This file
               controls display fields, sidebar facets, MCP summary facets, and hidden query normalization.
+            </p>
+            <p>
+              Set <code>HIKARI_FACET_PREVIEW_LIMIT</code> to control how many values each facet shows
+              before the UI displays a <code>View more</code> expander. The default is <code>10</code>.
             </p>
             <p>
               Use <code>aliases</code> to map source fields into canonical Hikari facets. For example,
@@ -215,6 +220,7 @@ docker compose up mock-victorialogs api web</code></pre>
   --values ./hikari-values.yaml `
   --set image.repository=ghcr.io/bradmb/hikari `
   --set-string image.tag=latest `
+  --set env.facetPreviewLimit=10 `
   --set env.victoriaUrl=http://victorialogs.example.svc:9428</code></pre>
           </section>
 

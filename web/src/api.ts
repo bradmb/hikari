@@ -114,5 +114,5 @@ export function tailUrl(query: string) {
 }
 
 export function getAppConfig() {
-  return request<{ default_query: string; fieldMappings: FieldMappings; aiEnabled: boolean }>("/api/config");
+  return request<{ default_query: string; fieldMappings: FieldMappings; facetPreviewLimit?: number; aiEnabled: boolean }>("/api/config");
 }
