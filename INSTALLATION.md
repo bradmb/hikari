@@ -80,20 +80,63 @@ Keep secrets out of committed files.
 
 ## Field Mappings
 
-Hikari resolves display columns, facets, MCP summaries, and hidden query alias expansion from `config/field-mappings.json`.
+Hikari resolves display columns, facets, MCP summaries, and hidden query alias expansion from `config/field-mappings.json`. This file is the place to adapt Hikari to your log schema.
 
-Use `aliases` to map your log schema into canonical fields:
+The mapping has three parts:
+
+- `defaultFields`: fields shown first in manual field selectors and field discovery.
+- `aliases`: source fields that should populate a canonical Hikari field.
+- `facets`: the facet groups shown in the left sidebar and MCP summaries.
+
+Use `aliases` to map your log schema into canonical fields. The first item can be the canonical field itself, followed by every source field that may contain the same value:
 
 ```json
 {
   "aliases": {
-    "service": ["service", "service.name", "app", "kubernetes.container_name"],
-    "host": ["host", "host.name", "hostname", "kubernetes.pod_node_name"]
+    "service": ["service", "service.name", "service_name", "app", "kubernetes.container_name"],
+    "host": ["host", "host.name", "host_name", "hostname", "kubernetes.pod_node_name"]
   }
 }
 ```
 
-Use `facets` to choose which fields appear in the left sidebar and MCP summary output. In Kubernetes, the Helm chart mounts this JSON through a ConfigMap under `fieldMappings.config`.
+Hikari applies these aliases to backend VictoriaLogs requests with hidden LogsQL
+`copy` pipes. Users still see and share the clean canonical query, such as
+`_time:15m service:="api"`, while Hikari sends the configured copies when it
+loads rows, facets, field values, hit buckets, live tail data, and MCP results.
+
+For example, with the mapping above, a visible query like:
+
+```text
+_time:15m
+```
+
+is sent to VictoriaLogs with generated copies similar to:
+
+```text
+_time:15m | copy service.name as service | copy service_name as service | copy host.name as host | copy host_name as host
+```
+
+Do not add these copy pipes manually to user-facing saved queries. Configure the
+facet aliases once and let Hikari add them consistently.
+
+Use `facets` to choose the canonical fields shown in the left sidebar and MCP summary output:
+
+```json
+{
+  "facets": [
+    { "field": "environment", "label": "Environment" },
+    { "field": "service", "label": "Service", "summary": true },
+    { "field": "host", "label": "Host", "summary": true },
+    { "field": "level", "label": "Level", "summary": true },
+    { "field": "kubernetes.pod_namespace", "key": "namespace", "label": "Namespace", "summary": true },
+    { "field": "kubernetes.pod_name", "key": "pod", "label": "Pod", "summary": true }
+  ]
+}
+```
+
+Each facet `field` is the canonical field Hikari displays and filters on. The `key` is optional and provides a shorter MCP summary key. Set `summary: true` for facets that should appear in MCP `summarize_window` and default `get_facets` output.
+
+In Kubernetes, the Helm chart mounts this JSON through a ConfigMap under `fieldMappings.config`.
 
 For non-Helm deployments, set `HIKARI_FIELD_MAPPINGS_FILE` to a mounted JSON file. `HIKARI_FIELD_MAPPINGS` can provide inline JSON overrides when a file mount is inconvenient.
 

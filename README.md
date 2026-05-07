@@ -48,7 +48,17 @@ AWS Secrets Manager variants are supported for deployments that load secrets at 
 - `HIKARI_VICTORIA_HEADERS_SECRET_ID`
 - `HIKARI_OPENAI_API_KEY_SECRET_ID`
 
-Field mappings live in `config/field-mappings.json`. Use this file to map your log schema into Hikari's canonical UI concepts. For example, map `service.name` into `service`, or add additional host aliases without rebuilding the web bundle.
+## Facet Mapping
+
+Field and facet mappings live in `config/field-mappings.json`. Use this file to map your log schema into Hikari's canonical UI concepts without hard-coding source-specific fields into the app.
+
+- `defaultFields` controls the fields shown first in selectors and discovery.
+- `aliases` maps source fields into canonical fields such as `service`, `host`, and `level`.
+- `facets` controls the left sidebar facet groups and MCP summary facets.
+
+For example, `service.name` and `service_name` can both populate the canonical `service` facet, while `host.name` and `host_name` can populate `host`. Hikari applies those aliases to backend VictoriaLogs requests with hidden LogsQL `copy` pipes, so users still see clean queries like `_time:15m service:="api"`.
+
+See `INSTALLATION.md` for the full mapping format and Kubernetes configuration notes.
 
 ## MCP
 

@@ -533,6 +533,7 @@ function parseDurationMs(value: string): number | null {
 }
 
 function durationToken(ms: number): string {
+  if (ms < 60 * 1000) return `${Math.max(1, Math.round(ms / 1000))}s`;
   const minutes = Math.max(1, Math.round(ms / (60 * 1000)));
   if (minutes % (7 * 24 * 60) === 0) return `${minutes / (7 * 24 * 60)}w`;
   if (minutes % (24 * 60) === 0) return `${minutes / (24 * 60)}d`;
@@ -557,20 +558,7 @@ function timeRangeForQuery(query: string, window: QueryWindow): { start: number;
 function histogramStepMs(query: string, window: QueryWindow): number {
   const range = timeRangeForQuery(query, window);
   const span = Math.max(60 * 1000, range.end - range.start);
-  const steps = [
-    60 * 1000,
-    2 * 60 * 1000,
-    5 * 60 * 1000,
-    10 * 60 * 1000,
-    15 * 60 * 1000,
-    30 * 60 * 1000,
-    60 * 60 * 1000,
-    2 * 60 * 60 * 1000,
-    6 * 60 * 60 * 1000,
-    12 * 60 * 60 * 1000,
-    24 * 60 * 60 * 1000
-  ];
-  return steps.find((step) => Math.ceil(span / step) <= 72) ?? steps[steps.length - 1];
+  return Math.max(1000, Math.ceil(span / 180));
 }
 
 function hitTimestamp(hit: Record<string, unknown>): number {
@@ -647,6 +635,17 @@ function rowTimestamp(row: LogRow): number {
   const raw = timeValue(row);
   if (!raw) return NaN;
   return new Date(normalizeIsoTimestamp(raw)).getTime();
+}
+
+function rowsNewestFirst(rows: LogRow[]): LogRow[] {
+  return [...rows].sort((left, right) => {
+    const leftTime = rowTimestamp(left);
+    const rightTime = rowTimestamp(right);
+    if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) return 0;
+    if (Number.isNaN(leftTime)) return 1;
+    if (Number.isNaN(rightTime)) return -1;
+    return rightTime - leftTime;
+  });
 }
 
 function severityKey(level: string): "error" | "warning" | "info" | "debug" | "other" {
@@ -1279,7 +1278,7 @@ function App() {
         getHits(backendQuery, durationToken(activeHitStepMs), activeWindow),
         getFields(backendQuery, activeWindow)
       ]);
-      const nextRows = searchResult.rows.length ? searchResult.rows : [];
+      const nextRows = searchResult.rows.length ? rowsNewestFirst(searchResult.rows) : [];
       setRows(nextRows);
       const selectedId = selectedEventIdFromUrl();
       if (selectedId) {
@@ -1565,8 +1564,8 @@ function App() {
   }, [live, query, appliedFilters, mode, timeWindow]);
 
   const histogram = useMemo(() => {
-    const step = Math.max(60 * 1000, hitStepMs);
-    const bucketCount = Math.max(1, Math.min(120, Math.ceil((hitRange.end - hitRange.start) / step)));
+    const step = Math.max(1000, hitStepMs);
+    const bucketCount = 180;
     const minTime = hitRange.end - bucketCount * step;
     const totals = Array.from({ length: bucketCount }, () => 0);
 
@@ -1578,7 +1577,7 @@ function App() {
     });
 
     const maxTotal = Math.max(1, ...totals);
-    return totals.map((total, i) => {
+    const buckets = totals.map((total, i) => {
       const height = total === 0 ? 0 : Math.max(3, Math.round((total / maxTotal) * 72));
       const startTime = minTime + i * step;
       const endTime = startTime + step;
@@ -1595,9 +1594,10 @@ function App() {
         label: `${total} logs from ${formatBucketTime(startTime, step)} to ${formatBucketTime(endTime, step)}`
       };
     });
+    return { buckets, maxTotal };
   }, [hits, hitRange, hitStepMs]);
 
-  const selectedHistogramRange = dragRange && histogram.length
+  const selectedHistogramRange = dragRange && histogram.buckets.length
     ? {
         start: Math.min(dragRange.anchor, dragRange.cursor),
         end: Math.max(dragRange.anchor, dragRange.cursor)
@@ -1606,10 +1606,10 @@ function App() {
 
   function bucketIndexFromClientX(clientX: number): number | null {
     const element = histogramRef.current;
-    if (!element || histogram.length === 0) return null;
+    if (!element || histogram.buckets.length === 0) return null;
     const rect = element.getBoundingClientRect();
     const ratio = (clientX - rect.left) / Math.max(1, rect.width);
-    return Math.min(histogram.length - 1, Math.max(0, Math.floor(ratio * histogram.length)));
+    return Math.min(histogram.buckets.length - 1, Math.max(0, Math.floor(ratio * histogram.buckets.length)));
   }
 
   function updateHoveredBucket(clientX: number) {
@@ -1619,8 +1619,8 @@ function App() {
   }
 
   function applyHistogramRange(startIndex: number, endIndex: number) {
-    const start = histogram[Math.min(startIndex, endIndex)];
-    const end = histogram[Math.max(startIndex, endIndex)];
+    const start = histogram.buckets[Math.min(startIndex, endIndex)];
+    const end = histogram.buckets[Math.max(startIndex, endIndex)];
     if (!start || !end) return;
     const nextWindow = {
       start: new Date(start.startTime).toISOString(),
@@ -2124,7 +2124,7 @@ function App() {
                       <span>{label}</span>
                       <CheckCircle2 size={13} />
                     </summary>
-                    {values.slice(0, 10).map((item) => (
+                  {values.slice(0, 250).map((item) => (
                       <button key={`${field}-${item.value}`} onClick={() => toggleFilter(field, item.value)}>
                         <input type="checkbox" checked={appliedFilters.some((filter) => filter.field === field && filter.value === item.value)} readOnly />
                         <i className={`facet-swatch ${field === "level" ? item.value.toLowerCase() : ""}`} />
@@ -2203,16 +2203,20 @@ function App() {
             if (!dragRange) setHoveredBucket(null);
           }}
         >
+          <div className="histogram-y-label" aria-hidden="true">Logs</div>
+          <div className="histogram-y-max" aria-hidden="true">{histogram.maxTotal}</div>
+          <div className="histogram-y-min" aria-hidden="true">0</div>
+          <div className="histogram-x-label" aria-hidden="true">Time</div>
           {selectedHistogramRange && (
             <span
               className="histogram-selection"
               style={{
-                left: `${(selectedHistogramRange.start / histogram.length) * 100}%`,
-                width: `${((selectedHistogramRange.end - selectedHistogramRange.start + 1) / histogram.length) * 100}%`
+                left: `${(selectedHistogramRange.start / histogram.buckets.length) * 100}%`,
+                width: `${((selectedHistogramRange.end - selectedHistogramRange.start + 1) / histogram.buckets.length) * 100}%`
               }}
             />
           )}
-          {histogram.map((bar) => (
+          {histogram.buckets.map((bar) => (
             <span key={bar.key} className={`hbar ${hoveredBucket === bar.key ? "hovered" : ""}`} style={{ height: `${bar.height}px` }} title={bar.label}>
               {bar.error > 0 && <i className="seg error" style={{ flexBasis: `${bar.error}%` }} />}
               {bar.warning > 0 && <i className="seg warning" style={{ flexBasis: `${bar.warning}%` }} />}
@@ -2220,10 +2224,10 @@ function App() {
               {bar.other > 0 && <i className="seg other" style={{ flexBasis: `${bar.other}%` }} />}
             </span>
           ))}
-          {hoveredBucket !== null && histogram[hoveredBucket] && (
-            <div className="histogram-tooltip" style={{ left: `${((hoveredBucket + 0.5) / histogram.length) * 100}%` }}>
-              <strong>{histogram[hoveredBucket].total} logs</strong>
-              <span>{formatBucketTime(histogram[hoveredBucket].startTime, hitStepMs)} - {formatBucketTime(histogram[hoveredBucket].endTime, hitStepMs)}</span>
+          {hoveredBucket !== null && histogram.buckets[hoveredBucket] && (
+            <div className="histogram-tooltip" style={{ left: `${((hoveredBucket + 0.5) / histogram.buckets.length) * 100}%` }}>
+              <strong>{histogram.buckets[hoveredBucket].total} logs</strong>
+              <span>{formatBucketTime(histogram.buckets[hoveredBucket].startTime, hitStepMs)} - {formatBucketTime(histogram.buckets[hoveredBucket].endTime, hitStepMs)}</span>
             </div>
           )}
         </section>

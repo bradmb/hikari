@@ -19,7 +19,9 @@ FIELDS = [
     "_msg",
     "level",
     "service",
+    "service_name",
     "host",
+    "host_name",
     "status",
     "environment",
     "client",
@@ -111,7 +113,9 @@ def _rows(count: int = 15 * 500) -> list[dict[str, Any]]:
                 "_msg": f"{message} service={service} client={client} status={status}",
                 "level": level,
                 "service": service,
+                "service_name": service,
                 "host": host,
+                "host_name": host,
                 "status": status,
                 "environment": environment,
                 "client": client,
@@ -142,6 +146,22 @@ def _limit(query: str, fallback: int) -> int:
     if not match:
         return fallback
     return max(1, min(int(match.group(1)), 5000))
+
+
+def _request_limit(form: dict[str, str], fallback: int) -> int:
+    if form.get("limit"):
+        return max(1, min(int(form["limit"]), 5000))
+    return _limit(form.get("query", ""), fallback)
+
+
+def _duration_seconds(value: str, fallback: int) -> int:
+    match = re.search(r"(\d+)([smhd])", value, re.IGNORECASE)
+    if not match:
+        return fallback
+    amount = int(match.group(1))
+    unit = match.group(2).lower()
+    multipliers = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+    return max(1, amount * multipliers[unit])
 
 
 def _matches(row: dict[str, Any], query: str) -> bool:
@@ -188,7 +208,7 @@ async def health() -> dict[str, str]:
 async def query(request: Request) -> dict[str, Any]:
     form = await _form(request)
     logsql = form.get("query", "_time:15m")
-    rows = _filtered(logsql)[: _limit(logsql, 500)]
+    rows = sorted(_filtered(logsql), key=lambda row: str(row.get("_time", "")), reverse=True)[: _request_limit(form, 500)]
     return {"rows": rows, "stats": {"count": len(rows)}}
 
 
@@ -198,10 +218,14 @@ async def hits(request: Request) -> dict[str, Any]:
     logsql = form.get("query", "_time:15m")
     rows = _filtered(logsql)
     now = datetime.now(UTC).replace(second=0, microsecond=0)
+    span_seconds = _duration_seconds(logsql, 15 * 60)
+    step_seconds = _duration_seconds(form.get("step", "1m"), 60)
+    bucket_count = max(1, min(240, (span_seconds + step_seconds - 1) // step_seconds))
     buckets = []
-    for minute in range(14, -1, -1):
-        bucket_time = now - timedelta(minutes=minute)
-        cutoff = bucket_time + timedelta(minutes=1)
+    start = now - timedelta(seconds=bucket_count * step_seconds)
+    for index in range(bucket_count):
+        bucket_time = start + timedelta(seconds=index * step_seconds)
+        cutoff = bucket_time + timedelta(seconds=step_seconds)
         count = sum(1 for row in rows if bucket_time <= datetime.fromisoformat(str(row["_time"]).replace("Z", "+00:00")) < cutoff)
         buckets.append({"time": bucket_time.isoformat().replace("+00:00", "Z"), "hits": count})
     return {"values": buckets}

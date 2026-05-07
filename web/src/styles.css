@@ -957,9 +957,9 @@ summary svg {
   height: 90px;
   display: flex;
   align-items: end;
-  gap: 2px;
+  gap: 1px;
   margin: 6px 14px 0;
-  padding: 10px 4px 4px;
+  padding: 14px 10px 14px 24px;
   background: var(--bg-surface);
   border: 1px solid var(--border-soft);
   position: relative;
@@ -971,16 +971,16 @@ summary svg {
 .histogram::after {
   content: "";
   position: absolute;
-  left: 4px;
-  right: 4px;
-  bottom: 4px;
+  left: 24px;
+  right: 10px;
+  bottom: 14px;
   height: 1px;
   background: var(--border);
 }
 
 .hbar {
   flex: 1;
-  min-width: 2px;
+  min-width: 1px;
   display: flex;
   flex-direction: column-reverse;
   background: transparent;
@@ -989,6 +989,47 @@ summary svg {
   transition: filter 140ms ease, transform 140ms ease;
   position: relative;
   z-index: 1;
+}
+
+.histogram-y-label,
+.histogram-x-label,
+.histogram-y-max,
+.histogram-y-min {
+  position: absolute;
+  z-index: 2;
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.histogram-y-label {
+  left: 5px;
+  top: 50%;
+  transform: translateY(-50%) rotate(-90deg);
+  transform-origin: center;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.histogram-x-label {
+  right: 10px;
+  bottom: 2px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.histogram-y-max {
+  left: 22px;
+  top: 7px;
+  transform: translateX(-100%);
+}
+
+.histogram-y-min {
+  left: 22px;
+  bottom: 11px;
+  transform: translateX(-100%);
 }
 
 .hbar:hover,

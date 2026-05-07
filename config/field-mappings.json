@@ -3,9 +3,11 @@
     "environment",
     "service",
     "service.name",
+    "service_name",
     "host",
     "hostname",
     "host.name",
+    "host_name",
     "MachineName",
     "level",
     "severity_text",
@@ -26,6 +28,7 @@
     "service": [
       "service",
       "service.name",
+      "service_name",
       "app",
       "kubernetes.pod_labels.app.kubernetes.io/name",
       "kubernetes.pod_labels.k8s-app",
@@ -34,8 +37,8 @@
       "kubernetes.container_name",
       "source"
     ],
-    "host": ["host", "hostname", "host.name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
-    "hostname": ["hostname", "host", "host.name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
+    "host": ["host", "hostname", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
+    "hostname": ["hostname", "host", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
     "level": ["level", "Level", "severity", "severity_text"],
     "kubernetes.pod_namespace": ["kubernetes.pod_namespace", "namespace"],
     "kubernetes.pod_name": ["kubernetes.pod_name", "pod"]

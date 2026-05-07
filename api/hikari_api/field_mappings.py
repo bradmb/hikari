@@ -118,5 +118,33 @@ def aliases_for(config: dict[str, Any], field: str) -> list[str]:
     return [field]
 
 
+def copy_pipes_for(config: dict[str, Any]) -> list[str]:
+    aliases = config.get("aliases", {})
+    if not isinstance(aliases, dict):
+        return []
+
+    pipes: list[str] = []
+    for target, values in aliases.items():
+        target_field = str(target).strip()
+        if not target_field:
+            continue
+        for source in _string_list(values):
+            if source == target_field:
+                continue
+            pipes.append(f"copy {source} as {target_field}")
+    return list(dict.fromkeys(pipes))
+
+
+def with_copy_pipes(query: str, config: dict[str, Any]) -> str:
+    clean_query = query.strip()
+    if not clean_query:
+        clean_query = "_time:15m"
+    existing = clean_query.lower()
+    pipes = [pipe for pipe in copy_pipes_for(config) if f"| {pipe}".lower() not in existing]
+    if not pipes:
+        return clean_query
+    return f"{clean_query} | {' | '.join(pipes)}"
+
+
 def summary_facets(config: dict[str, Any]) -> list[dict[str, Any]]:
     return [facet for facet in config.get("facets", []) if facet.get("summary")]

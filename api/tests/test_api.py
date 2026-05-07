@@ -15,6 +15,62 @@ from hikari_api.main import app
 from hikari_api.models import AiQueryRequest, AiQueryResponse
 from hikari_api.settings import Settings, get_settings
 
+TEST_FIELD_MAPPINGS = {
+    "defaultFields": [
+        "environment",
+        "service",
+        "service.name",
+        "service_name",
+        "host",
+        "hostname",
+        "host.name",
+        "host_name",
+        "MachineName",
+        "level",
+        "severity_text",
+        "source",
+        "status",
+        "client",
+        "kubernetes.pod_namespace",
+        "kubernetes.pod_name",
+        "kubernetes.pod_node_name",
+        "kubernetes.node_name",
+        "kubernetes.container_name",
+        "kubernetes.pod_labels.app.kubernetes.io/name",
+        "kubernetes.pod_labels.k8s-app",
+        "kubernetes.pod_labels.app",
+    ],
+    "aliases": {
+        "environment": ["environment", "env", "Environment"],
+        "service": [
+            "service",
+            "service.name",
+            "service_name",
+            "app",
+            "kubernetes.pod_labels.app.kubernetes.io/name",
+            "kubernetes.pod_labels.k8s-app",
+            "kubernetes.pod_labels.app",
+            "kubernetes.pod_labels.app.kubernetes.io/component",
+            "kubernetes.container_name",
+            "source",
+        ],
+        "host": ["host", "hostname", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
+        "hostname": ["hostname", "host", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
+        "level": ["level", "Level", "severity", "severity_text"],
+        "kubernetes.pod_namespace": ["kubernetes.pod_namespace", "namespace"],
+        "kubernetes.pod_name": ["kubernetes.pod_name", "pod"],
+    },
+    "facets": [
+        {"field": "environment", "label": "Environment"},
+        {"field": "service", "label": "Service", "summary": True},
+        {"field": "host", "label": "Host", "summary": True},
+        {"field": "level", "label": "Level", "summary": True},
+        {"field": "source", "label": "Source"},
+        {"field": "kubernetes.pod_namespace", "key": "namespace", "label": "Namespace", "summary": True},
+        {"field": "kubernetes.pod_name", "key": "pod", "label": "Pod", "summary": True},
+    ],
+}
+
 
 class FakeVictoriaLogsClient:
     def __init__(self) -> None:
@@ -49,6 +105,7 @@ def override_settings() -> Settings:
         HIKARI_VICTORIA_URL="http://victorialogs",
         HIKARI_DEFAULT_QUERY="_time:15m",
         HIKARI_DEFAULT_FIELDS="service,level",
+        HIKARI_FIELD_MAPPINGS=TEST_FIELD_MAPPINGS,
         OPENAI_API_KEY="test-key",
     )
 
@@ -73,6 +130,28 @@ def test_search_proxies_query_endpoint():
         response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
     assert response.status_code == 200
     assert response.json()["rows"][0]["service"] == "api"
+
+
+def test_search_sends_limit_as_api_parameter():
+    fake = FakeVictoriaLogsClient()
+
+    def override_fake_client() -> FakeVictoriaLogsClient:
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
+    assert response.status_code == 200
+    path, payload = fake.calls[0]
+    assert path == "/select/logsql/query"
+    assert payload["start"] is None
+    assert payload["end"] is None
+    assert payload["limit"] == 100
+    assert payload["query"].startswith("_time:15m | copy")
+    assert "copy service.name as service" in payload["query"]
+    assert "copy host_name as host" in payload["query"]
 
 
 def test_hits_facets_and_field_values():
@@ -374,6 +453,7 @@ async def test_mcp_get_instructions_explains_hikari_workflow():
 async def test_mcp_summarize_window_returns_ui_like_facets(monkeypatch):
     fake = FakeMcpVictoriaLogsClient()
     monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: fake)
+    monkeypatch.setattr(hikari_mcp, "_field_mappings", lambda: TEST_FIELD_MAPPINGS)
 
     result = await hikari_mcp.summarize_window("_time:15m", limit=25)
 
@@ -404,16 +484,18 @@ async def test_mcp_summarize_window_uses_host_when_hostname_is_empty(monkeypatch
 
     fake = HostFallbackClient()
     monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: fake)
+    monkeypatch.setattr(hikari_mcp, "_field_mappings", lambda: TEST_FIELD_MAPPINGS)
 
     result = await hikari_mcp.summarize_window("_time:15m", fields=["hostname"])
 
     assert result["facets"]["hostname"]["sources"] == [
         "hostname",
         "host",
+        "host.name",
+        "host_name",
+        "MachineName",
         "kubernetes.pod_node_name",
         "kubernetes.node_name",
-        "host.name",
-        "MachineName",
     ]
     assert result["facets"]["hostname"]["values"][0] == {"value": "node-a.internal.example", "hits": 41717}
 
@@ -422,6 +504,7 @@ async def test_mcp_summarize_window_uses_host_when_hostname_is_empty(monkeypatch
 async def test_mcp_get_facets_defaults_to_summary_fields(monkeypatch):
     fake = FakeMcpVictoriaLogsClient()
     monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: fake)
+    monkeypatch.setattr(hikari_mcp, "_field_mappings", lambda: TEST_FIELD_MAPPINGS)
 
     await hikari_mcp.get_facets("_time:15m")
 
@@ -433,11 +516,12 @@ async def test_mcp_get_facets_defaults_to_summary_fields(monkeypatch):
 async def test_mcp_get_facets_keeps_explicit_advanced_fields(monkeypatch):
     fake = FakeMcpVictoriaLogsClient()
     monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: fake)
+    monkeypatch.setattr(hikari_mcp, "_field_mappings", lambda: TEST_FIELD_MAPPINGS)
 
     await hikari_mcp.get_facets("_time:15m", fields=["host", "namespace"])
 
     facets_call = next(data for path, data in fake.calls if path == "/select/logsql/facets")
-    assert facets_call["field"] == ["kubernetes.pod_node_name", "kubernetes.pod_namespace"]
+    assert facets_call["field"] == ["host", "kubernetes.pod_namespace"]
 
 
 @pytest.mark.anyio

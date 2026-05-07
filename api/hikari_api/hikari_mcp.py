@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .ai import generate_logsql
-from .field_mappings import aliases_for, get_field_mappings, summary_facets
+from .field_mappings import aliases_for, get_field_mappings, summary_facets, with_copy_pipes
 from .models import AiQueryRequest
 from .settings import Settings, get_settings
 from .victorialogs import VictoriaLogsClient
@@ -18,31 +18,20 @@ MAX_FIELD_VALUE_LIMIT = 200
 MAX_TAIL_ROWS = 200
 MAX_TAIL_SECONDS = 60
 SUMMARY_FIELDS = {
-    "service": {
-        "field": "service",
-        "fallback_fields": [
-            "app",
-            "kubernetes.pod_labels.app.kubernetes.io/name",
-            "kubernetes.pod_labels.k8s-app",
-            "kubernetes.pod_labels.app",
-            "kubernetes.container_name",
-            "source",
-        ],
-        "label": "Service",
-    },
-    "hostname": {
-        "field": "hostname",
-        "fallback_fields": ["host", "kubernetes.pod_node_name", "kubernetes.node_name"],
-        "label": "Hostname",
-    },
+    "service": {"field": "service", "label": "Service"},
+    "host": {"field": "host", "label": "Host"},
+    "hostname": {"field": "hostname", "label": "Hostname"},
     "level": {"field": "level", "label": "Level"},
-    "namespace": {"field": "kubernetes.pod_namespace", "label": "Namespace"},
-    "pod": {"field": "kubernetes.pod_name", "label": "Pod"},
 }
 
 
 def _field_mappings() -> dict[str, Any]:
     return get_field_mappings(_settings())
+
+
+def _mapped_query(query: str) -> str:
+    return with_copy_pipes(query, _field_mappings())
+
 
 def _transport_security_settings() -> TransportSecuritySettings:
     allowed_hosts = get_settings().mcp_allowed_hosts
@@ -126,38 +115,44 @@ def _merge_values(*sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _summary_field_keys(fields: list[str] | None) -> list[str]:
+    config = _field_mappings()
     if not fields:
-        return [str(facet.get("key") or facet["field"]) for facet in summary_facets(_field_mappings())]
+        return [str(facet.get("key") or facet["field"]) for facet in summary_facets(config)]
     keys: list[str] = []
     for field in fields:
         normalized = field.strip()
-        match normalized:
-            case "service":
-                keys.append("service")
-            case "host" | "hostname":
-                keys.append("hostname")
-            case "level":
-                keys.append("level")
-            case "namespace" | "kubernetes.pod_namespace":
-                keys.append("namespace")
-            case "pod" | "kubernetes.pod_name":
-                keys.append("pod")
-            case _:
-                keys.append(normalized)
+        if not normalized:
+            continue
+        normalized_lower = normalized.lower()
+        matching_facet = next(
+            (
+                facet
+                for facet in summary_facets(config)
+                if normalized_lower
+                in {
+                    str(facet.get("key") or facet["field"]).lower(),
+                    str(facet["field"]).lower(),
+                    str(facet.get("label") or facet["field"]).lower(),
+                }
+            ),
+            None,
+        )
+        keys.append(str(matching_facet.get("key") or matching_facet["field"]) if matching_facet else normalized)
     return list(dict.fromkeys(keys))
 
 
 def _facet_fields(fields: list[str] | None) -> list[str]:
+    config = _field_mappings()
     if not fields:
-        return [str(facet["field"]) for facet in summary_facets(_field_mappings())]
-    aliases = {
-        "namespace": "kubernetes.pod_namespace",
-        "pod": "kubernetes.pod_name",
-        "host": "kubernetes.pod_node_name",
-        "hostname": "kubernetes.pod_node_name",
-        "service": "kubernetes.container_name",
-    }
-    return [aliases.get(field.strip(), field.strip()) for field in fields if field.strip()]
+        return [str(facet["field"]) for facet in summary_facets(config)]
+    mapped: list[str] = []
+    for field in fields:
+        normalized = field.strip()
+        if not normalized:
+            continue
+        spec = _summary_spec(normalized, config)
+        mapped.append(str(spec["field"]))
+    return list(dict.fromkeys(mapped))
 
 
 def _summary_spec(key: str, config: dict[str, Any]) -> dict[str, Any]:
@@ -165,7 +160,7 @@ def _summary_spec(key: str, config: dict[str, Any]) -> dict[str, Any]:
         return list(dict.fromkeys(value for value in values if value))
 
     for facet in summary_facets(config):
-        if key in {facet.get("key"), facet.get("field")}:
+        if key.lower() in {str(facet.get("key") or facet["field"]).lower(), str(facet.get("field")).lower(), str(facet.get("label") or facet["field"]).lower()}:
             field = str(facet["field"])
             aliases = aliases_for(config, field)
             return {
@@ -231,10 +226,11 @@ async def get_instructions() -> dict[str, Any]:
 )
 async def query_logs(query: str, limit: int = 100, start: str | None = None, end: str | None = None) -> dict[str, Any]:
     bounded_limit = _bounded(limit, 100, MAX_QUERY_LIMIT)
-    payload = {"query": _query_with_limit(query, bounded_limit), "start": start, "end": end}
+    visible_query = _query_with_limit(query, bounded_limit)
+    payload = {"query": _mapped_query(visible_query), "start": start, "end": end}
     result = await _client().query("/select/logsql/query", payload)
     rows = _rows(result)[:bounded_limit]
-    return {"query": payload["query"], "rows": rows, "stats": {"count": len(rows)}}
+    return {"query": visible_query, "rows": rows, "stats": {"count": len(rows)}}
 
 
 @hikari_mcp.tool(
@@ -256,10 +252,11 @@ async def ai_search(
         vl,
     )
     bounded_limit = _bounded(limit, 100, MAX_QUERY_LIMIT)
-    result = await vl.query("/select/logsql/query", {"query": _query_with_limit(generated.query, bounded_limit)})
+    visible_query = _query_with_limit(generated.query, bounded_limit)
+    result = await vl.query("/select/logsql/query", {"query": _mapped_query(visible_query)})
     rows = _rows(result)[:bounded_limit]
     return {
-        "query": _query_with_limit(generated.query, bounded_limit),
+        "query": visible_query,
         "explanation": generated.explanation,
         "evidence": generated.evidence,
         "steps": [step.model_dump() for step in generated.steps],
@@ -280,7 +277,7 @@ async def tail_logs(query: str = "_time:5m", duration_seconds: int = 10, max_row
 
     try:
         async with asyncio.timeout(bounded_seconds):
-            async for line in _client().stream("/select/logsql/tail", {"query": query}):
+            async for line in _client().stream("/select/logsql/tail", {"query": _mapped_query(query)}):
                 try:
                     parsed = json.loads(line)
                 except json.JSONDecodeError:
@@ -301,7 +298,7 @@ async def tail_logs(query: str = "_time:5m", duration_seconds: int = 10, max_row
     description="List VictoriaLogs field names visible for a query window.",
 )
 async def get_fields(query: str = "_time:15m", start: str | None = None, end: str | None = None) -> dict[str, Any]:
-    return await _client().query("/select/logsql/field_names", {"query": query, "start": start, "end": end})
+    return await _client().query("/select/logsql/field_names", {"query": _mapped_query(query), "start": start, "end": end})
 
 
 @hikari_mcp.tool(
@@ -320,7 +317,7 @@ async def get_field_values(
     bounded_limit = _bounded(limit, 25, MAX_FIELD_VALUE_LIMIT)
     return await _client().query(
         "/select/logsql/field_values",
-        {"query": query, "field": field, "limit": bounded_limit, "start": start, "end": end, "filter": filter},
+        {"query": _mapped_query(query), "field": field, "limit": bounded_limit, "start": start, "end": end, "filter": filter},
     )
 
 
@@ -330,7 +327,7 @@ async def get_field_values(
     description="Return VictoriaLogs hit counts over time for a LogsQL query.",
 )
 async def get_hits(query: str, step: str = "1m", start: str | None = None, end: str | None = None) -> dict[str, Any]:
-    return await _client().query("/select/logsql/hits", {"query": query, "step": step, "start": start, "end": end})
+    return await _client().query("/select/logsql/hits", {"query": _mapped_query(query), "step": step, "start": start, "end": end})
 
 
 @hikari_mcp.tool(
@@ -350,7 +347,8 @@ async def summarize_window(
     field_keys = _summary_field_keys(fields)
     vl = _client()
     config = _field_mappings()
-    hits = await vl.query("/select/logsql/hits", {"query": query, "step": step, "start": start, "end": end})
+    mapped = _mapped_query(query)
+    hits = await vl.query("/select/logsql/hits", {"query": mapped, "step": step, "start": start, "end": end})
     facets: dict[str, Any] = {}
 
     for key in field_keys:
@@ -360,7 +358,7 @@ async def summarize_window(
             _values(
                 await vl.query(
                     "/select/logsql/field_values",
-                    {"query": query, "field": field, "limit": bounded_limit, "start": start, "end": end},
+                    {"query": mapped, "field": field, "limit": bounded_limit, "start": start, "end": end},
                 )
             )
         ]
@@ -370,7 +368,7 @@ async def summarize_window(
                 _values(
                     await vl.query(
                         "/select/logsql/field_values",
-                        {"query": query, "field": fallback_field, "limit": bounded_limit, "start": start, "end": end},
+                        {"query": mapped, "field": fallback_field, "limit": bounded_limit, "start": start, "end": end},
                     )
                 )
             )
@@ -396,7 +394,7 @@ async def get_facets(
     bounded_limit = _bounded(limit, 20, MAX_FIELD_VALUE_LIMIT)
     return await _client().query(
         "/select/logsql/facets",
-        {"query": query, "field": _facet_fields(fields), "limit": bounded_limit, "start": start, "end": end},
+        {"query": _mapped_query(query), "field": _facet_fields(fields), "limit": bounded_limit, "start": start, "end": end},
     )
 
 

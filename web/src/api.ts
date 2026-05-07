@@ -97,7 +97,7 @@ export function getFields(query: string, window?: QueryWindow) {
 }
 
 export function getFieldValues(query: string, field: string, window?: QueryWindow) {
-  const params = windowParams(new URLSearchParams({ query, field, limit: "25" }), window);
+  const params = windowParams(new URLSearchParams({ query, field, limit: "250" }), window);
   return request<{ values?: ValueHit[] }>(`/api/field-values?${params.toString()}`);
 }
 

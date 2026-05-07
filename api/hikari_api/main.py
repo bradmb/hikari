@@ -12,7 +12,7 @@ from starlette.responses import Response
 from starlette.responses import StreamingResponse
 
 from .ai import generate_logsql
-from .field_mappings import get_field_mappings
+from .field_mappings import get_field_mappings, with_copy_pipes
 from .hikari_mcp import hikari_mcp_app
 from .models import AiQueryRequest, FacetsRequest, FieldValuesRequest, HitsRequest, SearchRequest, SearchResponse
 from .settings import Settings, get_settings
@@ -42,6 +42,10 @@ def client(settings: Settings = Depends(get_settings)) -> VictoriaLogsClient:
     return VictoriaLogsClient(settings)
 
 
+def mapped_query(query: str, settings: Settings) -> str:
+    return with_copy_pipes(query, get_field_mappings(settings))
+
+
 @app.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
@@ -61,24 +65,25 @@ def config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
 
 
 @app.post("/api/search", response_model=SearchResponse)
-async def search(request: SearchRequest, vl: VictoriaLogsClient = Depends(client)) -> SearchResponse:
-    payload = request.model_dump(exclude={"limit"})
-    query = payload["query"]
-    if "limit" not in query:
-        payload["query"] = f"{query} | limit {request.limit}"
+async def search(request: SearchRequest, settings: Settings = Depends(get_settings), vl: VictoriaLogsClient = Depends(client)) -> SearchResponse:
+    payload = request.model_dump()
+    payload["query"] = mapped_query(request.query, settings)
     result = await vl.query("/select/logsql/query", payload)
     rows = result.get("rows", result if isinstance(result, list) else [])
     return SearchResponse(rows=rows, stats={"count": len(rows)})
 
 
 @app.post("/api/hits")
-async def hits(request: HitsRequest, vl: VictoriaLogsClient = Depends(client)) -> Any:
-    return await vl.query("/select/logsql/hits", request.model_dump())
+async def hits(request: HitsRequest, settings: Settings = Depends(get_settings), vl: VictoriaLogsClient = Depends(client)) -> Any:
+    data = request.model_dump()
+    data["query"] = mapped_query(request.query, settings)
+    return await vl.query("/select/logsql/hits", data)
 
 
 @app.post("/api/facets")
-async def facets(request: FacetsRequest, vl: VictoriaLogsClient = Depends(client)) -> Any:
+async def facets(request: FacetsRequest, settings: Settings = Depends(get_settings), vl: VictoriaLogsClient = Depends(client)) -> Any:
     data = request.model_dump()
+    data["query"] = mapped_query(request.query, settings)
     if data["fields"]:
         data["field"] = data.pop("fields")
     return await vl.query("/select/logsql/facets", data)
@@ -89,9 +94,10 @@ async def fields(
     query: str = Query("_time:15m"),
     start: str | None = None,
     end: str | None = None,
+    settings: Settings = Depends(get_settings),
     vl: VictoriaLogsClient = Depends(client),
 ) -> Any:
-    return await vl.query("/select/logsql/field_names", {"query": query, "start": start, "end": end})
+    return await vl.query("/select/logsql/field_names", {"query": mapped_query(query, settings), "start": start, "end": end})
 
 
 @app.get("/api/field-values")
@@ -102,20 +108,22 @@ async def field_values(
     end: str | None = None,
     filter: str | None = None,
     limit: int = 50,
+    settings: Settings = Depends(get_settings),
     vl: VictoriaLogsClient = Depends(client),
 ) -> Any:
-    request = FieldValuesRequest(query=query, field=field, start=start, end=end, filter=filter, limit=limit)
+    request = FieldValuesRequest(query=mapped_query(query, settings), field=field, start=start, end=end, filter=filter, limit=limit)
     return await vl.query("/select/logsql/field_values", request.model_dump())
 
 
 @app.get("/api/tail")
 async def tail(
     query: str = Query("_time:5m"),
+    settings: Settings = Depends(get_settings),
     vl: VictoriaLogsClient = Depends(client),
 ) -> StreamingResponse:
     async def events():
         try:
-            async for line in vl.stream("/select/logsql/tail", {"query": query}):
+            async for line in vl.stream("/select/logsql/tail", {"query": mapped_query(query, settings)}):
                 yield f"data: {line}\n\n"
         except Exception as exc:
             yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"
