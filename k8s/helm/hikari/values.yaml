@@ -65,9 +65,11 @@ fieldMappings:
       - environment
       - service
       - service.name
+      - service_name
       - host
       - hostname
       - host.name
+      - host_name
       - MachineName
       - level
       - severity_text
@@ -90,6 +92,7 @@ fieldMappings:
       service:
         - service
         - service.name
+        - service_name
         - app
         - kubernetes.pod_labels.app.kubernetes.io/name
         - kubernetes.pod_labels.k8s-app
@@ -101,6 +104,7 @@ fieldMappings:
         - host
         - hostname
         - host.name
+        - host_name
         - MachineName
         - kubernetes.pod_node_name
         - kubernetes.node_name
@@ -108,6 +112,7 @@ fieldMappings:
         - hostname
         - host
         - host.name
+        - host_name
         - MachineName
         - kubernetes.pod_node_name
         - kubernetes.node_name

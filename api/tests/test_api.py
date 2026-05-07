@@ -166,6 +166,39 @@ def test_search_sends_limit_as_api_parameter():
     assert "copy host_name as host" in payload["query"]
 
 
+def test_search_normalizes_configured_aliases_in_rows():
+    class AliasOnlyClient(FakeVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            return {
+                "rows": [
+                    {
+                        "_time": "2026-05-07T02:44:37Z",
+                        "_msg": "windows event",
+                        "service_name": "windows-event-log",
+                        "host_name": "LM-STAGING-DORY",
+                    }
+                ]
+            }
+
+    fake = AliasOnlyClient()
+
+    def override_fake_client():
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
+
+    row = response.json()["rows"][0]
+    assert row["service"] == "windows-event-log"
+    assert row["host"] == "LM-STAGING-DORY"
+    assert row["service_name"] == "windows-event-log"
+    assert row["host_name"] == "LM-STAGING-DORY"
+
+
 def test_hits_facets_and_field_values():
     with TestClient(app) as test_client:
         hits = test_client.post("/api/hits", json={"query": "_time:15m", "step": "1m"})
@@ -463,6 +496,22 @@ async def test_mcp_streamable_http_lists_and_calls_query_tool(monkeypatch):
     } <= tool_names
     assert result.structuredContent["query"] == "_time:15m | limit 5"
     assert result.structuredContent["rows"][0]["service"] == "api"
+
+
+@pytest.mark.anyio
+async def test_mcp_query_logs_normalizes_configured_aliases(monkeypatch):
+    class AliasOnlyClient(FakeMcpVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            return {"rows": [{"_msg": "windows event", "service_name": "windows-event-log", "host_name": "LM-STAGING-DORY"}]}
+
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: AliasOnlyClient())
+    monkeypatch.setattr(hikari_mcp, "_field_mappings", lambda: TEST_FIELD_MAPPINGS)
+
+    result = await hikari_mcp.query_logs("_time:15m", limit=5)
+
+    assert result["rows"][0]["service"] == "windows-event-log"
+    assert result["rows"][0]["host"] == "LM-STAGING-DORY"
 
 
 @pytest.mark.anyio

@@ -56,6 +56,8 @@
           <span>On this page</span>
           <a href="#endpoint">Endpoint</a>
           <a href="#workflow">Workflow</a>
+          <a href="#capabilities">AI capability</a>
+          <a href="#facet-mapping">Facet mapping</a>
           <a href="#tools">Tools</a>
           <a href="#examples">Examples</a>
         </aside>
@@ -82,9 +84,46 @@
               <li>Call <code>get_instructions</code> to load field mapping and investigation guidance.</li>
               <li>Call <code>summarize_window</code> to inspect the current time range and major facets.</li>
               <li>Use <code>get_fields</code>, <code>get_field_values</code>, or <code>get_facets</code> before writing narrow queries.</li>
-              <li>Use <code>query_logs</code> for known LogsQL or <code>ai_search</code> for natural-language requests.</li>
+              <li>Use <code>query_logs</code> for known LogsQL. If AI is enabled, use <code>ai_search</code> for natural-language requests.</li>
               <li>Keep result limits bounded and include the query in the final answer.</li>
             </ol>
+          </section>
+
+          <section id="capabilities" class="docs-section">
+            <h2>Optional AI capability</h2>
+            <p>
+              <code>ai_search</code> is registered only when Hikari has an OpenAI API key from
+              <code>OPENAI_API_KEY</code> or <code>HIKARI_OPENAI_API_KEY_SECRET_ID</code>. Without a key,
+              MCP clients still get the non-AI tools for raw queries, facets, field values, hit counts,
+              summaries, and bounded live-tail samples.
+            </p>
+          </section>
+
+          <section id="facet-mapping" class="docs-section">
+            <h2>Facet mapping</h2>
+            <p>
+              MCP summaries use the same configured facets as the UI. Configure those facets and aliases
+              in <code>config/field-mappings.json</code> instead of hard-coding source fields into client prompts.
+            </p>
+            <pre class="code-sample"><code>{
+  "aliases": {
+    "service": ["service", "service.name", "service_name", "kubernetes.container_name"],
+    "host": ["host", "host.name", "host_name", "hostname", "kubernetes.pod_node_name"]
+  },
+  "facets": [
+    { "field": "service", "label": "Service", "summary": true },
+    { "field": "host", "label": "Host", "summary": true },
+    { "field": "level", "label": "Level", "summary": true },
+    { "field": "kubernetes.pod_namespace", "key": "namespace", "label": "Namespace", "summary": true },
+    { "field": "kubernetes.pod_name", "key": "pod", "label": "Pod", "summary": true }
+  ]
+}</code></pre>
+            <p>
+              Hikari applies the aliases to backend VictoriaLogs requests with hidden LogsQL
+              <code>copy</code> pipes. For example, <code>host_name</code> can populate the canonical
+              <code>host</code> facet and <code>service_name</code> can populate <code>service</code>
+              without changing the query shown to users or MCP clients.
+            </p>
           </section>
 
           <section id="tools" class="docs-section">
@@ -108,7 +147,7 @@
               </div>
               <div role="row">
                 <code>ai_search</code>
-                <span>Generates LogsQL from a natural-language prompt, executes it, and returns evidence.</span>
+                <span>Optional. Generates LogsQL from a natural-language prompt when OpenAI is configured.</span>
               </div>
               <div role="row">
                 <code>get_facets</code>
@@ -152,6 +191,10 @@ query_logs({
   "query": "_time:15m level:error service:\"api\"",
   "limit": 100
 })</code></pre>
+            <p>
+              If <code>ai_search</code> is not returned by <code>tools/list</code>, configure
+              <code>OPENAI_API_KEY</code> or use the non-AI query and discovery tools.
+            </p>
           </section>
         </main>
       </div>

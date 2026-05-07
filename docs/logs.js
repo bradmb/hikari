@@ -30,7 +30,7 @@
     info: [
       "query completed hits={hits} step=1m cache={cache}",
       "accepted {rows} events from namespace {namespace}",
-      "generated LogsQL from prompt=\"{prompt}\"",
+      "query helper prepared LogsQL for prompt=\"{prompt}\"",
       "facet selection namespace={namespace} level={level}",
       "tool={tool} rows={rows} duration_ms={latency}",
       "request completed path={path} status=200 latency_ms={latency}"
@@ -101,7 +101,7 @@
       queue: choice(["webhooks", "emails", "exports", "events"]),
       rows: 100 + Math.floor(Math.random() * 900),
       slowLatency: 900 + Math.floor(Math.random() * 2200),
-      tool: choice(["query_logs", "summarize_window", "get_facets", "ai_search"]),
+      tool: choice(["query_logs", "summarize_window", "get_facets", "get_hits"]),
       trace: `01JZ${Math.random().toString(36).slice(2, 14).toUpperCase()}`
     };
     return values[name] ?? "";

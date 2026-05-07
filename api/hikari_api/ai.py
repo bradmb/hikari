@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 
-from .field_mappings import get_field_mappings, with_copy_pipes
+from .field_mappings import get_field_mappings, normalize_rows_aliases, with_copy_pipes
 from .models import AiQueryRequest, AiQueryResponse
 from .settings import Settings
 from .victorialogs import VictoriaLogsClient
@@ -120,8 +120,9 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
 
 async def _discover_log_context(settings: Settings, request: AiQueryRequest, vl: VictoriaLogsClient | None) -> dict[str, Any]:
     base_query = request.current_query or settings.default_query
-    mapped_base_query = with_copy_pipes(base_query, get_field_mappings(settings))
-    fields = _ordered_fields(request.fields or settings.default_fields)
+    field_mappings = get_field_mappings(settings)
+    mapped_base_query = with_copy_pipes(base_query, field_mappings)
+    fields = _ordered_fields([*(request.fields or settings.default_fields), *field_mappings.get("defaultFields", [])])
     candidates = _candidate_terms(request.prompt)
     context: dict[str, Any] = {
         "base_query": base_query,
@@ -148,7 +149,8 @@ async def _discover_log_context(settings: Settings, request: AiQueryRequest, vl:
     try:
         result = await vl.query("/select/logsql/query", {"query": _with_limit(mapped_base_query, 80)})
         rows = result.get("rows", result if isinstance(result, list) else [])
-        context["sample_rows"] = [_summarize_row(row) for row in rows[:40] if isinstance(row, dict)]
+        normalized_rows = normalize_rows_aliases(rows[:40], field_mappings)
+        context["sample_rows"] = [_summarize_row(row) for row in normalized_rows if isinstance(row, dict)]
     except Exception:
         rows = []
 

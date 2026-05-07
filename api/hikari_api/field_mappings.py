@@ -146,5 +146,34 @@ def with_copy_pipes(query: str, config: dict[str, Any]) -> str:
     return f"{clean_query} | {' | '.join(pipes)}"
 
 
+def _row_value(row: dict[str, Any], field: str) -> Any:
+    value = row.get(field)
+    if value is not None and str(value) != "":
+        return value
+    return None
+
+
+def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    normalized = dict(row)
+    aliases = config.get("aliases", {})
+    if not isinstance(aliases, dict):
+        return normalized
+
+    for target, values in aliases.items():
+        target_field = str(target).strip()
+        if not target_field or _row_value(normalized, target_field) is not None:
+            continue
+        for source in _string_list(values):
+            value = _row_value(normalized, source)
+            if value is not None:
+                normalized[target_field] = value
+                break
+    return normalized
+
+
+def normalize_rows_aliases(rows: list[Any], config: dict[str, Any]) -> list[Any]:
+    return [normalize_row_aliases(row, config) if isinstance(row, dict) else row for row in rows]
+
+
 def summary_facets(config: dict[str, Any]) -> list[dict[str, Any]]:
     return [facet for facet in config.get("facets", []) if facet.get("summary")]

@@ -6,7 +6,7 @@
     <title>Hikari - Open source log intelligence</title>
     <meta
       name="description"
-      content="Hikari is an open source log investigation interface for VictoriaLogs with natural-language search, facets, and MCP tools."
+      content="Hikari is an open source log investigation interface for VictoriaLogs with facets, optional natural-language search, and MCP tools."
     >
     <link rel="icon" type="image/svg+xml" href="./favicon.svg">
     <link rel="stylesheet" href="./styles.css">
@@ -81,7 +81,7 @@
                 <span>12:41:11</span><b>victorialogs</b><em>query completed hits=7512 step=1m cache=warm</em>
               </div>
               <div class="tail-row sev-info">
-                <span>12:41:12</span><b>hikari-ai</b><em>generated LogsQL from prompt="summarize checkout errors"</em>
+                <span>12:41:12</span><b>hikari-api</b><em>query helper prepared LogsQL for prompt="summarize checkout errors"</em>
               </div>
               <div class="tail-row sev-debug">
                 <span>12:41:13</span><b>ingress</b><em>edge access authenticated service_token=automation status=ok</em>
@@ -108,7 +108,7 @@
                 <span>12:41:20</span><b>auth-service</b><em>token introspection failed issuer=legacy-auth status=503</em>
               </div>
               <div class="tail-row sev-info">
-                <span>12:41:21</span><b>hikari-api</b><em>natural-language query mapped to observed service auth-service</em>
+                <span>12:41:21</span><b>hikari-api</b><em>field aliases mapped observed service auth-service</em>
               </div>
               <div class="tail-row sev-debug">
                 <span>12:41:22</span><b>collector</b><em>batch flushed bytes=82011 rows=500 duration_ms=66</em>
@@ -121,7 +121,7 @@
             <h1 id="hero-title">Hikari</h1>
             <p class="hero-subtitle">Shine a light on your logs.</p>
             <p class="hero-text">
-              Query VictoriaLogs with a focused interface, natural-language search, and MCP tools built for agents that need real operational context.
+              Query VictoriaLogs with a focused interface, configurable facets, optional natural-language search, and MCP tools built for agents that need real operational context.
             </p>
             <div class="hero-actions">
               <a class="button primary" href="https://github.com/bradmb/hikari">View on GitHub</a>
@@ -138,7 +138,7 @@
           <div class="feature-grid">
             <article>
               <h3>Search by intent</h3>
-              <p>Turn plain English into LogsQL with evidence, field discovery, and the exact query used.</p>
+              <p>When OpenAI is configured, turn plain English into LogsQL with evidence, field discovery, and the exact query used.</p>
             </article>
             <article>
               <h3>Keep the UI close to the data</h3>
@@ -156,7 +156,7 @@
             <p class="eyebrow">MCP endpoint</p>
             <h2 id="mcp-title">Give AI tools a controlled way to query logs.</h2>
             <p>
-              Hikari ships MCP tools for window summaries, raw LogsQL, AI-assisted search, field discovery, facets, hit counts, and bounded live-tail samples.
+              Hikari ships MCP tools for window summaries, raw LogsQL, field discovery, facets, hit counts, bounded live-tail samples, and optional AI-assisted search.
             </p>
           </div>
           <pre class="code-sample"><code>https://logs.example.com/mcp
@@ -165,8 +165,8 @@ tools/list
   get_instructions
   summarize_window
   query_logs
-  ai_search
-  get_facets</code></pre>
+  get_facets
+  # ai_search appears when OpenAI is configured</code></pre>
         </section>
       </main>
     </div>

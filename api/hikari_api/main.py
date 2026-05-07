@@ -12,7 +12,7 @@ from starlette.responses import Response
 from starlette.responses import StreamingResponse
 
 from .ai import generate_logsql
-from .field_mappings import get_field_mappings, with_copy_pipes
+from .field_mappings import get_field_mappings, normalize_row_aliases, normalize_rows_aliases, with_copy_pipes
 from .hikari_mcp import hikari_mcp_app
 from .models import AiQueryRequest, FacetsRequest, FieldValuesRequest, HitsRequest, SearchRequest, SearchResponse
 from .settings import Settings, get_settings
@@ -71,11 +71,12 @@ def config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
 
 @app.post("/api/search", response_model=SearchResponse)
 async def search(request: SearchRequest, settings: Settings = Depends(get_settings), vl: VictoriaLogsClient = Depends(client)) -> SearchResponse:
+    field_mappings = get_field_mappings(settings)
     payload = request.model_dump()
-    payload["query"] = mapped_query(request.query, settings)
+    payload["query"] = with_copy_pipes(request.query, field_mappings)
     result = await vl.query("/select/logsql/query", payload)
     rows = result.get("rows", result if isinstance(result, list) else [])
-    return SearchResponse(rows=rows, stats={"count": len(rows)})
+    return SearchResponse(rows=normalize_rows_aliases(rows, field_mappings), stats={"count": len(rows)})
 
 
 @app.post("/api/hits")
@@ -126,9 +127,17 @@ async def tail(
     settings: Settings = Depends(get_settings),
     vl: VictoriaLogsClient = Depends(client),
 ) -> StreamingResponse:
+    field_mappings = get_field_mappings(settings)
+
     async def events():
         try:
-            async for line in vl.stream("/select/logsql/tail", {"query": mapped_query(query, settings)}):
+            async for line in vl.stream("/select/logsql/tail", {"query": with_copy_pipes(query, field_mappings)}):
+                try:
+                    parsed = json.loads(line)
+                    if isinstance(parsed, dict):
+                        line = json.dumps(normalize_row_aliases(parsed, field_mappings))
+                except json.JSONDecodeError:
+                    pass
                 yield f"data: {line}\n\n"
         except Exception as exc:
             yield f"event: error\ndata: {json.dumps({'message': str(exc)})}\n\n"

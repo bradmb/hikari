@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .ai import generate_logsql
-from .field_mappings import aliases_for, get_field_mappings, summary_facets, with_copy_pipes
+from .field_mappings import aliases_for, get_field_mappings, normalize_row_aliases, normalize_rows_aliases, summary_facets, with_copy_pipes
 from .models import AiQueryRequest
 from .settings import Settings, get_settings
 from .victorialogs import VictoriaLogsClient
@@ -247,7 +247,7 @@ async def query_logs(query: str, limit: int = 100, start: str | None = None, end
     visible_query = _query_with_limit(query, bounded_limit)
     payload = {"query": _mapped_query(visible_query), "start": start, "end": end}
     result = await _client().query("/select/logsql/query", payload)
-    rows = _rows(result)[:bounded_limit]
+    rows = normalize_rows_aliases(_rows(result), _field_mappings())[:bounded_limit]
     return {"query": visible_query, "rows": rows, "stats": {"count": len(rows)}}
 
 
@@ -272,7 +272,7 @@ async def ai_search(
     bounded_limit = _bounded(limit, 100, MAX_QUERY_LIMIT)
     visible_query = _query_with_limit(generated.query, bounded_limit)
     result = await vl.query("/select/logsql/query", {"query": _mapped_query(visible_query)})
-    rows = _rows(result)[:bounded_limit]
+    rows = normalize_rows_aliases(_rows(result), _field_mappings())[:bounded_limit]
     return {
         "query": visible_query,
         "explanation": generated.explanation,
@@ -301,7 +301,7 @@ async def tail_logs(query: str = "_time:5m", duration_seconds: int = 10, max_row
                 except json.JSONDecodeError:
                     parsed = {"_msg": line}
                 if isinstance(parsed, dict):
-                    rows.append(parsed)
+                    rows.append(normalize_row_aliases(parsed, _field_mappings()))
                 if len(rows) >= bounded_rows:
                     break
     except TimeoutError:
