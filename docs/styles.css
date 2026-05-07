@@ -728,6 +728,10 @@ h1 {
   border-top: 1px solid #2a2d35;
 }
 
+.reference-table > div > * {
+  min-width: 0;
+}
+
 .reference-table > div:first-child {
   border-top: 0;
   background: #181b22;
@@ -739,6 +743,25 @@ h1 {
 
 .reference-table span {
   color: #b2bac7;
+}
+
+@media (max-width: 820px) {
+  .reference-table > div,
+  .reference-table.compact > div {
+    grid-template-columns: 1fr;
+    gap: 7px;
+  }
+
+  .reference-table > div:first-child {
+    display: none;
+  }
+
+  .reference-table code {
+    display: block;
+    width: fit-content;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+  }
 }
 
 .tool-list {
@@ -877,11 +900,6 @@ h1 {
     padding: 54px 0;
   }
 
-  .reference-table > div,
-  .reference-table.compact > div {
-    grid-template-columns: 1fr;
-    gap: 7px;
-  }
 }
 
 @media (prefers-reduced-motion: reduce) {

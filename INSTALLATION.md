@@ -56,6 +56,24 @@ http://localhost:8000
 
 This serves the FastAPI API and the built web UI from one process.
 
+## Prebuilt Container Image
+
+The OSS repository publishes a multi-architecture image to GitHub Container Registry:
+
+```text
+ghcr.io/bradmb/hikari:latest
+```
+
+`latest` follows the `main` branch. Version tags are published from Git tags that match `v*.*.*`, and each build also gets a `sha-...` tag. For production deployments, pin a version tag or SHA tag instead of `latest`.
+
+Run the image directly:
+
+```powershell
+docker run --rm -p 8000:8000 `
+  -e HIKARI_VICTORIA_URL=https://victorialogs.example.com `
+  ghcr.io/bradmb/hikari:latest
+```
+
 ## Using A Real VictoriaLogs Backend
 
 Set `HIKARI_VICTORIA_URL` in `.env`:
@@ -219,7 +237,7 @@ Deploy with the included Helm chart, overriding image and VictoriaLogs settings:
 helm upgrade --install hikari ./k8s/helm/hikari `
   --namespace hikari `
   --create-namespace `
-  --set image.repository=registry.example.com/hikari `
+  --set image.repository=ghcr.io/bradmb/hikari `
   --set-string image.tag=latest `
   --set env.victoriaUrl=http://victorialogs.example.svc:9428
 ```

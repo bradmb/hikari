@@ -55,6 +55,7 @@
           <a href="./mcp.html">MCP tools</a>
           <span>On this page</span>
           <a href="#local">Local</a>
+          <a href="#container-image">Container image</a>
           <a href="#facet-mapping">Facet mapping</a>
           <a href="#kubernetes">Kubernetes</a>
           <a href="#auth">Authentication</a>
@@ -84,6 +85,20 @@ docker compose up mock-victorialogs api web</code></pre>
             </div>
             <p>To run the production-style combined image locally:</p>
             <pre class="code-sample"><code>docker compose up hikari</code></pre>
+          </section>
+
+          <section id="container-image" class="docs-section">
+            <h2>Prebuilt container image</h2>
+            <p>The OSS repository publishes a multi-architecture image to GitHub Container Registry.</p>
+            <pre class="code-sample"><code>ghcr.io/bradmb/hikari:latest</code></pre>
+            <p>
+              <code>latest</code> follows <code>main</code>. Version tags are published from Git tags that
+              match <code>v*.*.*</code>, and each build also gets a <code>sha-...</code> tag. For production,
+              pin a version tag or SHA tag instead of <code>latest</code>.
+            </p>
+            <pre class="code-sample"><code>docker run --rm -p 8000:8000 `
+  -e HIKARI_VICTORIA_URL=https://victorialogs.example.com `
+  ghcr.io/bradmb/hikari:latest</code></pre>
           </section>
 
           <section class="docs-section">
@@ -145,14 +160,11 @@ docker compose up mock-victorialogs api web</code></pre>
 
           <section id="kubernetes" class="docs-section">
             <h2>Kubernetes</h2>
-            <p>Build and push an image, then install the included Helm chart with your registry and VictoriaLogs URL.</p>
-            <pre class="code-sample"><code>docker build -t registry.example.com/hikari:latest .
-docker push registry.example.com/hikari:latest
-
-helm upgrade --install hikari ./k8s/helm/hikari `
+            <p>Install the included Helm chart with the GHCR image or your own image registry.</p>
+            <pre class="code-sample"><code>helm upgrade --install hikari ./k8s/helm/hikari `
   --namespace hikari `
   --create-namespace `
-  --set image.repository=registry.example.com/hikari `
+  --set image.repository=ghcr.io/bradmb/hikari `
   --set-string image.tag=latest `
   --set env.victoriaUrl=http://victorialogs.example.svc:9428</code></pre>
             <p>Verify the rollout and health endpoint.</p>

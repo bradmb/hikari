@@ -27,6 +27,24 @@ docker compose up hikari
 
 Then open `http://localhost:8000`.
 
+## Container Image
+
+The OSS repository publishes a multi-architecture image to GHCR:
+
+```text
+ghcr.io/bradmb/hikari:latest
+```
+
+`latest` follows `main`. Release tags use the matching Git tag, and every build also gets a `sha-...` tag. For production, pin a release tag or SHA tag instead of `latest`.
+
+Run the image directly:
+
+```powershell
+docker run --rm -p 8000:8000 `
+  -e HIKARI_VICTORIA_URL=https://victorialogs.example.com `
+  ghcr.io/bradmb/hikari:latest
+```
+
 ## Configuration
 
 Common environment variables:
