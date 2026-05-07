@@ -44,6 +44,7 @@ LEVEL_ALIASES = {
 
 
 async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: VictoriaLogsClient | None = None) -> AiQueryResponse:
+    """Generate or refine LogsQL from natural language using observed VictoriaLogs context."""
     if not settings.openai_api_key:
         raise HTTPException(status_code=503, detail="OPENAI_API_KEY or HIKARI_OPENAI_API_KEY_SECRET_ID is required")
 
@@ -145,6 +146,7 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
 
 
 def _compact_incident_context(context: dict[str, Any]) -> dict[str, Any]:
+    """Trim prior answer context to the fields that help follow-up questions stay grounded."""
     if not isinstance(context, dict) or not context:
         return {}
     compacted: dict[str, Any] = {}
@@ -163,6 +165,7 @@ def _compact_incident_context(context: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _discover_log_context(settings: Settings, request: AiQueryRequest, vl: VictoriaLogsClient | None) -> dict[str, Any]:
+    """Collect field values and representative rows that constrain the AI-generated query."""
     base_query = request.current_query or settings.default_query
     field_mappings = get_field_mappings(settings)
     mapped_base_query = with_copy_pipes(base_query, field_mappings)
@@ -224,6 +227,7 @@ def _ordered_fields(fields: list[str]) -> list[str]:
 
 
 def _candidate_terms(prompt: str) -> list[str]:
+    """Derive spelling variants from a prompt for matching against observed field values and rows."""
     words = [word for word in re.split(r"[^A-Za-z0-9]+", prompt.strip()) if len(word) > 1]
     phrases: set[str] = set()
     if prompt.strip():
@@ -316,6 +320,7 @@ def _matched_observations(
 
 
 def _apply_observed_query_expansions(parsed: dict[str, Any], discovery: dict[str, Any], prompt: str = "") -> dict[str, Any]:
+    """Expand AI level filters to observed severity variants without inventing unavailable values."""
     query = parsed.get("query")
     if not isinstance(query, str):
         return parsed

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import Depends, FastAPI, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -18,7 +20,19 @@ from .models import AiQueryRequest, FacetsRequest, FieldValuesRequest, HitsReque
 from .settings import Settings, get_settings
 from .victorialogs import VictoriaLogsClient
 
-app = FastAPI(title="Hikari API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Create shared resources that are safe to reuse across normal API requests."""
+    settings = get_settings()
+    app.state.victoria_http_client = httpx.AsyncClient(timeout=settings.request_timeout_seconds)
+    try:
+        yield
+    finally:
+        await app.state.victoria_http_client.aclose()
+
+
+app = FastAPI(title="Hikari API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -31,6 +45,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def normalize_mcp_path(request: Request, call_next):
+    """Accept both /mcp and /mcp/ for clients that do not normalize streamable HTTP URLs."""
     if request.scope.get("path") == "/mcp":
         request.scope["path"] = "/mcp/"
         if request.scope.get("raw_path") == b"/mcp":
@@ -38,15 +53,18 @@ async def normalize_mcp_path(request: Request, call_next):
     return await call_next(request)
 
 
-def client(settings: Settings = Depends(get_settings)) -> VictoriaLogsClient:
-    return VictoriaLogsClient(settings)
+def client(request: Request, settings: Settings = Depends(get_settings)) -> VictoriaLogsClient:
+    """Return a VictoriaLogs client backed by the app-level HTTP connection pool."""
+    return VictoriaLogsClient(settings, getattr(request.app.state, "victoria_http_client", None))
 
 
 def mapped_query(query: str, settings: Settings) -> str:
+    """Apply configured query-time field copy pipes before forwarding LogsQL upstream."""
     return with_copy_pipes(query, get_field_mappings(settings))
 
 
 def ai_enabled(settings: Settings) -> bool:
+    """Report whether AI-only UI and MCP tools should be enabled."""
     return bool(settings.openai_api_key)
 
 
@@ -72,6 +90,7 @@ def config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
 
 @app.post("/api/search", response_model=SearchResponse)
 async def search(request: SearchRequest, settings: Settings = Depends(get_settings), vl: VictoriaLogsClient = Depends(client)) -> SearchResponse:
+    """Run a bounded LogsQL query and normalize configured alias fields in returned rows."""
     field_mappings = get_field_mappings(settings)
     payload = request.model_dump()
     payload["query"] = with_copy_pipes(request.query, field_mappings)
@@ -128,6 +147,7 @@ async def tail(
     settings: Settings = Depends(get_settings),
     vl: VictoriaLogsClient = Depends(client),
 ) -> StreamingResponse:
+    """Proxy VictoriaLogs tail output as SSE while normalizing aliases row-by-row."""
     field_mappings = get_field_mappings(settings)
 
     async def events():

@@ -262,6 +262,26 @@ def test_parse_victorialogs_json_lines_response():
 
 
 @pytest.mark.anyio
+async def test_victorialogs_query_uses_injected_http_client():
+    class SharedHttpClient:
+        def __init__(self):
+            self.calls: list[dict] = []
+
+        async def post(self, url, data=None, headers=None):
+            self.calls.append({"url": url, "data": data, "headers": headers})
+            return httpx.Response(200, json={"rows": [{"_msg": "ok"}]})
+
+    from hikari_api.victorialogs import VictoriaLogsClient
+
+    shared = SharedHttpClient()
+    result = await VictoriaLogsClient(override_settings(), shared).query("/select/logsql/query", {"query": "_time:15m", "limit": 5})
+
+    assert result["rows"][0]["_msg"] == "ok"
+    assert shared.calls[0]["url"] == "http://victorialogs/select/logsql/query"
+    assert shared.calls[0]["data"] == {"query": "_time:15m", "limit": "5"}
+
+
+@pytest.mark.anyio
 async def test_ai_query_generation(monkeypatch):
     async def fake_post(self, url, headers=None, json=None):
         return httpx.Response(

@@ -103,6 +103,7 @@ def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, A
 
 
 def get_field_mappings(settings: Settings) -> dict[str, Any]:
+    """Load, merge, and normalize the configured canonical field/facet mapping."""
     config = _load_file(settings.field_mappings_file)
     if settings.field_mappings:
         config = _merge_config(config, settings.field_mappings)
@@ -110,6 +111,7 @@ def get_field_mappings(settings: Settings) -> dict[str, Any]:
 
 
 def aliases_for(config: dict[str, Any], field: str) -> list[str]:
+    """Return configured source fields for a canonical field, preserving the field itself as fallback."""
     aliases = config.get("aliases", {})
     if isinstance(aliases, dict):
         values = _string_list(aliases.get(field))
@@ -119,6 +121,7 @@ def aliases_for(config: dict[str, Any], field: str) -> list[str]:
 
 
 def copy_pipes_for(config: dict[str, Any]) -> list[str]:
+    """Build VictoriaLogs copy pipes that populate canonical fields from configured aliases."""
     aliases = config.get("aliases", {})
     if not isinstance(aliases, dict):
         return []
@@ -136,6 +139,7 @@ def copy_pipes_for(config: dict[str, Any]) -> list[str]:
 
 
 def with_copy_pipes(query: str, config: dict[str, Any]) -> str:
+    """Append missing copy pipes so downstream queries and rows expose canonical fields."""
     clean_query = query.strip()
     if not clean_query:
         clean_query = "_time:15m"
@@ -154,6 +158,7 @@ def _row_value(row: dict[str, Any], field: str) -> Any:
 
 
 def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
+    """Populate missing canonical row fields from their configured alias sources."""
     normalized = dict(row)
     aliases = config.get("aliases", {})
     if not isinstance(aliases, dict):
@@ -176,4 +181,5 @@ def normalize_rows_aliases(rows: list[Any], config: dict[str, Any]) -> list[Any]
 
 
 def summary_facets(config: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return facets intended for compact UI/MCP window summaries."""
     return [facet for facet in config.get("facets", []) if facet.get("summary")]

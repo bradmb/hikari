@@ -18,7 +18,7 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { generateQuery, getAppConfig, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiConversationMessage, type AiIncidentContext, type AiStep, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
+import { generateQuery, getAppConfig, getFacets, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiConversationMessage, type AiIncidentContext, type AiStep, type FacetsResponse, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
 import "./styles.css";
 
 const emptyFieldMappings: FieldMappings = { defaultFields: [], aliases: {}, facets: [] };
@@ -603,6 +603,36 @@ function normalizeHitBuckets(result: HitsResponse): HitBucket[] {
   });
 }
 
+/** Extract a value from Promise.allSettled without making optional telemetry requests fatal. */
+function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
+  return result.status === "fulfilled" ? result.value : fallback;
+}
+
+function isValueHit(value: unknown): value is ValueHit {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    "value" in value &&
+    typeof (value as { value?: unknown }).value === "string"
+  );
+}
+
+/** Normalize supported VictoriaLogs facet response shapes into the UI's field-to-values map. */
+function normalizeFacetResponse(result: FacetsResponse): Record<string, ValueHit[]> {
+  const out: Record<string, ValueHit[]> = {};
+  if (result.values && typeof result.values === "object") {
+    Object.entries(result.values).forEach(([field, values]) => {
+      if (Array.isArray(values)) out[field] = values.filter(isValueHit);
+    });
+  }
+  if (Array.isArray(result.facets)) {
+    result.facets.forEach((facet) => {
+      if (facet.field && Array.isArray(facet.values)) out[facet.field] = facet.values.filter(isValueHit);
+    });
+  }
+  return out;
+}
+
 function timeToken(query: string): string {
   return query.match(timeFilterPattern)?.[0] ?? defaultLogQuery;
 }
@@ -716,6 +746,7 @@ function quoteValue(value: string): string {
   return JSON.stringify(value);
 }
 
+/** Add a severity classifier clause used only for histogram level breakdown requests. */
 function queryWithLevelBucket(query: string, severity: HistogramSeverity): string {
   const variants: Record<HistogramSeverity, string[]> = {
     error: ["error", "Error", "ERROR", "err", "fatal", "critical"],
@@ -756,6 +787,7 @@ function levelVariants(value: string): string[] {
   return [value];
 }
 
+/** Resolve a canonical facet name to every configured source field that can carry the same value. */
 function aliasFieldsForFilter(field: string): string[] {
   const mapped = activeFieldMappings.aliases[field]?.map((item) => item.trim()).filter(Boolean) ?? [];
   return mapped.length > 0 ? mapped : [field];
@@ -854,6 +886,7 @@ function buildQueryWithFilters(query: string, currentFilters: AppliedFilter[], n
   return { query: nextQuery, filters: filtersWithTokens };
 }
 
+/** Build backend-only LogsQL that expands visible canonical facet filters across all aliases. */
 function queryWithExpandedFilters(query: string, filters: AppliedFilter[]): string {
   if (filters.length === 0) return query;
   let nextQuery = stripAppliedFilterTokens(query, filters);
@@ -1230,6 +1263,8 @@ function App() {
   const constellationRef = useRef<HTMLDivElement | null>(null);
   const tailRecentRef = useRef<LogRow[]>([]);
   const selectedEventIdRef = useRef<string | null>(selectedEventIdFromUrl());
+  const searchRunIdRef = useRef(0);
+  const facetRunIdRef = useRef(0);
 
   function updateAppUrl(
     nextMode: ViewMode,
@@ -1312,10 +1347,13 @@ function App() {
     updateAppUrl(mode, mode === "explore" ? selectedEventIdRef.current : null);
   }, [mode, selected]);
 
+  /** Run the visible query and update every dependent panel, ignoring stale responses from older runs. */
   async function runSearch(
     nextQuery = draftQuery,
     options: { relaxIfEmpty?: boolean; replaceUrl?: boolean; filters?: AppliedFilter[]; window?: QueryWindow; limit?: number } = {}
   ) {
+    const runId = ++searchRunIdRef.current;
+    const isCurrentRun = () => runId === searchRunIdRef.current;
     setLoading(true);
     setError("");
     try {
@@ -1342,7 +1380,7 @@ function App() {
           attempts += 1;
         }
       }
-      const [hitResult, fieldResult, errorHitResult, warningHitResult, infoHitResult, debugHitResult] = await Promise.all([
+      const [hitResult, fieldResult, errorHitResult, warningHitResult, infoHitResult, debugHitResult] = await Promise.allSettled([
         getHits(backendQuery, durationToken(activeHitStepMs), activeWindow),
         getFields(backendQuery, activeWindow),
         getHits(queryWithExpandedFilters(queryWithLevelBucket(activeQuery, "error"), activeFilters), durationToken(activeHitStepMs), activeWindow),
@@ -1350,6 +1388,9 @@ function App() {
         getHits(queryWithExpandedFilters(queryWithLevelBucket(activeQuery, "info"), activeFilters), durationToken(activeHitStepMs), activeWindow),
         getHits(queryWithExpandedFilters(queryWithLevelBucket(activeQuery, "debug"), activeFilters), durationToken(activeHitStepMs), activeWindow)
       ]);
+      if (!isCurrentRun()) return { query: activeQuery, relaxations };
+      const hitsResponse = settledValue<HitsResponse>(hitResult, { values: [] });
+      const fieldsResponse = settledValue<{ values?: ValueHit[] }>(fieldResult, { values: [] });
       const nextRows = searchResult.rows.length ? rowsNewestFirst(searchResult.rows) : [];
       setRows(nextRows);
       const selectedId = selectedEventIdFromUrl();
@@ -1368,14 +1409,14 @@ function App() {
         updateAppUrl("explore", selectedEventIdRef.current, options.replaceUrl ?? false, activeQuery, activeFilters, activeWindow);
       }
       setAiRelaxations(relaxations);
-      setHits(normalizeHitBuckets(hitResult));
+      setHits(normalizeHitBuckets(hitsResponse));
       setHistogramLevelHits({
-        error: normalizeHitBuckets(errorHitResult),
-        warning: normalizeHitBuckets(warningHitResult),
-        info: normalizeHitBuckets(infoHitResult),
-        debug: normalizeHitBuckets(debugHitResult)
+        error: normalizeHitBuckets(settledValue<HitsResponse>(errorHitResult, { values: [] })),
+        warning: normalizeHitBuckets(settledValue<HitsResponse>(warningHitResult, { values: [] })),
+        info: normalizeHitBuckets(settledValue<HitsResponse>(infoHitResult, { values: [] })),
+        debug: normalizeHitBuckets(settledValue<HitsResponse>(debugHitResult, { values: [] }))
       });
-      const nextFields = (fieldResult.values ?? [])
+      const nextFields = (fieldsResponse.values ?? [])
         .map((item) => item.value.trim())
         .filter(Boolean)
         .slice(0, 24);
@@ -1383,19 +1424,24 @@ function App() {
       void refreshFacets(activeQuery, activeFilters, activeWindow);
       return { query: activeQuery, relaxations };
     } catch (err) {
+      if (!isCurrentRun()) return { query: nextQuery, relaxations: [] };
       setError(err instanceof Error ? err.message : "Search failed");
       return { query: nextQuery, relaxations: [] };
     } finally {
-      setLoading(false);
+      if (isCurrentRun()) setLoading(false);
     }
+  }
+
+  async function loadFacetValues(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow): Promise<ValueHit[]> {
+    const fieldsToLoad = aliasFieldsForFilter(field);
+    const backendQuery = queryWithExpandedFilters(baseQuery, filters);
+    const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, window)));
+    return mergeFacetValues(field, ...results.map((result) => result.values));
   }
 
   async function loadFacet(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow) {
     try {
-      const fieldsToLoad = aliasFieldsForFilter(field);
-      const backendQuery = queryWithExpandedFilters(baseQuery, filters);
-      const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, window)));
-      const nextValues = mergeFacetValues(field, ...results.map((result) => result.values));
+      const nextValues = await loadFacetValues(field, baseQuery, filters, window);
       setFacets((current) => ({
         ...current,
         [field]: nextValues
@@ -1409,8 +1455,44 @@ function App() {
     }
   }
 
+  /** Refresh sidebar facets, preferring one batched backend call over many per-field requests. */
   async function refreshFacets(baseQuery = query, filters = appliedFilters, window = timeWindow) {
-    await Promise.all(fieldMappings.facets.map(({ field }) => loadFacet(field, baseQuery, filters, window)));
+    const runId = ++facetRunIdRef.current;
+    const isCurrentRun = () => runId === facetRunIdRef.current;
+    const fieldsToLoad = fieldMappings.facets.map(({ field }) => field);
+    if (fieldsToLoad.length === 0) return;
+
+    try {
+      const backendQuery = queryWithExpandedFilters(baseQuery, filters);
+      const batch = normalizeFacetResponse(await getFacets(backendQuery, fieldsToLoad, 100, window));
+      if (!isCurrentRun()) return;
+      if (Object.keys(batch).length > 0) {
+        const nextValues = Object.fromEntries(fieldsToLoad.map((field) => [field, mergeFacetValues(field, batch[field])]));
+        setFacets((current) => ({ ...current, ...nextValues }));
+        setFacetCache((current) => {
+          const merged = { ...current };
+          fieldsToLoad.forEach((field) => {
+            merged[field] = mergeFacetValues(field, current[field], nextValues[field]);
+          });
+          return merged;
+        });
+        return;
+      }
+    } catch {
+      // Fall back to per-field loading below. Older or mocked VictoriaLogs responses may not support batch facets.
+    }
+
+    const entries = await Promise.all(fieldsToLoad.map(async (field) => [field, await loadFacetValues(field, baseQuery, filters, window)] as const));
+    if (!isCurrentRun()) return;
+    const nextValues = Object.fromEntries(entries);
+    setFacets((current) => ({ ...current, ...nextValues }));
+    setFacetCache((current) => {
+      const merged = { ...current };
+      entries.forEach(([field, values]) => {
+        merged[field] = mergeFacetValues(field, current[field], values);
+      });
+      return merged;
+    });
   }
 
   function rowFacetValues(field: string): ValueHit[] {

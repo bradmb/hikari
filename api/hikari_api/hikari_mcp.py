@@ -243,6 +243,7 @@ async def get_instructions() -> dict[str, Any]:
     description="Run a bounded VictoriaLogs LogsQL query and return rows plus basic stats.",
 )
 async def query_logs(query: str, limit: int = 100, start: str | None = None, end: str | None = None) -> dict[str, Any]:
+    """Run bounded LogsQL and normalize configured alias fields in returned rows."""
     bounded_limit = _bounded(limit, 100, MAX_QUERY_LIMIT)
     visible_query = _query_with_limit(query, bounded_limit)
     payload = {"query": _mapped_query(visible_query), "start": start, "end": end}
@@ -262,6 +263,7 @@ async def ai_search(
     limit: int = 100,
     fields: list[str] | None = None,
 ) -> dict[str, Any]:
+    """Generate LogsQL from a prompt, execute it, and return the evidence trail."""
     settings = _settings()
     vl = _client(settings)
     generated = await generate_logsql(
@@ -289,6 +291,7 @@ async def ai_search(
     description="Sample the live VictoriaLogs tail for a bounded duration or row count.",
 )
 async def tail_logs(query: str = "_time:5m", duration_seconds: int = 10, max_rows: int = 50) -> dict[str, Any]:
+    """Collect a bounded live-tail sample for agents that need recent stream data."""
     bounded_seconds = _bounded(duration_seconds, 10, MAX_TAIL_SECONDS)
     bounded_rows = _bounded(max_rows, 50, MAX_TAIL_ROWS)
     rows: list[dict[str, Any]] = []
@@ -361,39 +364,35 @@ async def summarize_window(
     start: str | None = None,
     end: str | None = None,
 ) -> dict[str, Any]:
+    """Return UI-like summary data using bounded parallel field-value lookups."""
     bounded_limit = _bounded(limit, 25, MAX_FIELD_VALUE_LIMIT)
     field_keys = _summary_field_keys(fields)
     vl = _client()
     config = _field_mappings()
     mapped = _mapped_query(query)
-    hits = await vl.query("/select/logsql/hits", {"query": mapped, "step": step, "start": start, "end": end})
-    facets: dict[str, Any] = {}
+    semaphore = asyncio.Semaphore(8)
 
-    for key in field_keys:
-        spec = _summary_spec(key, config)
-        field = spec["field"]
-        value_sets = [
-            _values(
+    async def load_values(field: str) -> list[dict[str, Any]]:
+        async with semaphore:
+            return _values(
                 await vl.query(
                     "/select/logsql/field_values",
                     {"query": mapped, "field": field, "limit": bounded_limit, "start": start, "end": end},
                 )
             )
-        ]
-        sources = [field]
-        for fallback_field in spec.get("fallback_fields", []):
-            value_sets.append(
-                _values(
-                    await vl.query(
-                        "/select/logsql/field_values",
-                        {"query": mapped, "field": fallback_field, "limit": bounded_limit, "start": start, "end": end},
-                    )
-                )
-            )
-            sources.append(fallback_field)
-        values = _merge_values(*value_sets)[:bounded_limit]
-        facets[key] = {"label": spec["label"], "field": field, "sources": sources, "values": values}
 
+    async def load_facet(key: str) -> tuple[str, dict[str, Any]]:
+        spec = _summary_spec(key, config)
+        field = spec["field"]
+        sources = [field, *spec.get("fallback_fields", [])]
+        value_sets = await asyncio.gather(*(load_values(source) for source in sources))
+        values = _merge_values(*value_sets)[:bounded_limit]
+        return key, {"label": spec["label"], "field": field, "sources": sources, "values": values}
+
+    hits_task = asyncio.create_task(vl.query("/select/logsql/hits", {"query": mapped, "step": step, "start": start, "end": end}))
+    facet_entries = await asyncio.gather(*(load_facet(key) for key in field_keys))
+    hits = await hits_task
+    facets = dict(facet_entries)
     return {"query": query, "step": step, "buckets": hits.get("values", []) if isinstance(hits, dict) else [], "facets": facets}
 
 
@@ -409,6 +408,7 @@ async def get_facets(
     start: str | None = None,
     end: str | None = None,
 ) -> dict[str, Any]:
+    """Return facets for requested fields, defaulting to the same summary fields as Hikari."""
     bounded_limit = _bounded(limit, 20, MAX_FIELD_VALUE_LIMIT)
     return await _client().query(
         "/select/logsql/facets",
