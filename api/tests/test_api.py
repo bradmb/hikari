@@ -176,7 +176,7 @@ def test_search_normalizes_configured_aliases_in_rows():
                         "_time": "2026-05-07T02:44:37Z",
                         "_msg": "windows event",
                         "service_name": "windows-event-log",
-                        "host_name": "LM-STAGING-DORY",
+                        "host_name": "workstation-01",
                     }
                 ]
             }
@@ -194,9 +194,9 @@ def test_search_normalizes_configured_aliases_in_rows():
 
     row = response.json()["rows"][0]
     assert row["service"] == "windows-event-log"
-    assert row["host"] == "LM-STAGING-DORY"
+    assert row["host"] == "workstation-01"
     assert row["service_name"] == "windows-event-log"
-    assert row["host_name"] == "LM-STAGING-DORY"
+    assert row["host_name"] == "workstation-01"
 
 
 def test_hits_facets_and_field_values():
@@ -276,6 +276,7 @@ async def test_ai_query_generation(monkeypatch):
                                 "text": json_module.dumps(
                                     {
                                         "query": "_time:15m error",
+                                        "query_changed": True,
                                         "explanation": "Finds recent errors.",
                                         "evidence": ["Observed level value error."],
                                     }
@@ -295,6 +296,49 @@ async def test_ai_query_generation(monkeypatch):
     assert result.evidence == ["Observed level value error."]
     assert result.steps
     assert result.steps[-1].title == "Generated and normalized LogsQL"
+
+
+@pytest.mark.anyio
+async def test_ai_followup_can_keep_current_query(monkeypatch):
+    async def fake_post(self, url, headers=None, json=None):
+        return httpx.Response(
+            200,
+            json={
+                "output": [
+                    {
+                        "type": "message",
+                        "content": [
+                            {
+                                "type": "output_text",
+                                "text": json_module.dumps(
+                                    {
+                                        "query": "_time:1h service:\"worker\" level:error",
+                                        "query_changed": False,
+                                        "explanation": "The likely fix is to restart the worker after correcting its upstream dependency.",
+                                        "evidence": ["Prior rows showed worker errors from the same component."],
+                                    }
+                                ),
+                            }
+                        ],
+                    }
+                ]
+            },
+        )
+
+    json_module = json
+    monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)
+    result = await ai.generate_logsql(
+        override_settings(),
+        AiQueryRequest(
+            prompt="likely fix?",
+            current_query="_time:15m service:\"worker\" level:error",
+            conversation=[{"role": "user", "content": "Why is worker failing?"}],
+            incident_context={"query": "_time:15m service:\"worker\" level:error"},
+        ),
+    )
+    assert result.query_changed is False
+    assert result.query == "_time:15m service:\"worker\" level:error"
+    assert "likely fix" in result.explanation
 
 
 def test_ai_expands_level_filters_to_observed_variants():
@@ -504,7 +548,7 @@ async def test_mcp_query_logs_normalizes_configured_aliases(monkeypatch):
     class AliasOnlyClient(FakeMcpVictoriaLogsClient):
         async def query(self, path: str, data: dict):
             self.calls.append((path, data))
-            return {"rows": [{"_msg": "windows event", "service_name": "windows-event-log", "host_name": "LM-STAGING-DORY"}]}
+            return {"rows": [{"_msg": "windows event", "service_name": "windows-event-log", "host_name": "workstation-01"}]}
 
     monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: AliasOnlyClient())
     monkeypatch.setattr(hikari_mcp, "_field_mappings", lambda: TEST_FIELD_MAPPINGS)
@@ -512,7 +556,7 @@ async def test_mcp_query_logs_normalizes_configured_aliases(monkeypatch):
     result = await hikari_mcp.query_logs("_time:15m", limit=5)
 
     assert result["rows"][0]["service"] == "windows-event-log"
-    assert result["rows"][0]["host"] == "LM-STAGING-DORY"
+    assert result["rows"][0]["host"] == "workstation-01"
 
 
 @pytest.mark.anyio

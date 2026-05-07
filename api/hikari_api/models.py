@@ -30,10 +30,17 @@ class FieldValuesRequest(QueryWindow):
     limit: int = Field(50, ge=1, le=500)
 
 
+class AiConversationMessage(BaseModel):
+    role: str
+    content: str
+
+
 class AiQueryRequest(BaseModel):
     prompt: str = Field(..., min_length=1)
     current_query: str | None = None
     fields: list[str] = Field(default_factory=list)
+    conversation: list[AiConversationMessage] = Field(default_factory=list)
+    incident_context: dict[str, Any] = Field(default_factory=dict)
 
 
 class AiTraceStep(BaseModel):
@@ -46,6 +53,7 @@ class AiTraceStep(BaseModel):
 
 class AiQueryResponse(BaseModel):
     query: str
+    query_changed: bool = True
     explanation: str
     evidence: list[str] = Field(default_factory=list)
     steps: list[AiTraceStep] = Field(default_factory=list)

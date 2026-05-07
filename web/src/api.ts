@@ -48,6 +48,20 @@ export type FieldMappings = {
   facets: FieldMappingFacet[];
 };
 
+export type AiConversationMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type AiIncidentContext = {
+  query?: string;
+  explanation?: string;
+  evidence?: string[];
+  relaxations?: string[];
+  totalLogs?: number;
+  rows?: LogRow[];
+};
+
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -101,10 +115,16 @@ export function getFieldValues(query: string, field: string, window?: QueryWindo
   return request<{ values?: ValueHit[] }>(`/api/field-values?${params.toString()}`);
 }
 
-export function generateQuery(prompt: string, currentQuery: string, fields: string[]) {
-  return request<{ query: string; explanation: string; evidence?: string[]; steps?: AiStep[] }>("/api/ai/query", {
+export function generateQuery(
+  prompt: string,
+  currentQuery: string,
+  fields: string[],
+  conversation: AiConversationMessage[] = [],
+  incidentContext: AiIncidentContext = {}
+) {
+  return request<{ query: string; query_changed?: boolean; explanation: string; evidence?: string[]; steps?: AiStep[] }>("/api/ai/query", {
     method: "POST",
-    body: JSON.stringify({ prompt, current_query: currentQuery, fields })
+    body: JSON.stringify({ prompt, current_query: currentQuery, fields, conversation, incident_context: incidentContext })
   });
 }
 

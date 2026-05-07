@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import asyncio
 from typing import Any
 
 import httpx
@@ -50,9 +51,10 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
     schema = {
         "type": "object",
         "additionalProperties": False,
-        "required": ["query", "explanation", "evidence"],
+        "required": ["query", "query_changed", "explanation", "evidence"],
         "properties": {
             "query": {"type": "string"},
+            "query_changed": {"type": "boolean"},
             "explanation": {"type": "string"},
             "evidence": {
                 "type": "array",
@@ -61,10 +63,19 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
         },
     }
     field_list = ", ".join(request.fields or settings.default_fields)
+    prior_conversation = [
+        {"role": item.role, "content": item.content}
+        for item in request.conversation[-10:]
+        if item.role in {"user", "assistant"} and item.content.strip()
+    ]
+    incident_context = _compact_incident_context(request.incident_context)
+
     user_input = (
         f"Current LogsQL: {request.current_query or settings.default_query}\n"
         f"Known fields: {field_list}\n"
         f"Request: {request.prompt}\n\n"
+        f"Prior conversation:\n{json.dumps(prior_conversation, ensure_ascii=False, indent=2)}\n\n"
+        f"Current incident context:\n{json.dumps(incident_context, ensure_ascii=False, indent=2)}\n\n"
         "Observed VictoriaLogs context:\n"
         f"{json.dumps(discovery, ensure_ascii=False, indent=2)}"
     )
@@ -83,6 +94,16 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
             "or sample rows. Do not add typo variants or guessed field values to structured field filters. "
             "For severity, use the observed severity field. If severity_text is populated and level is not, "
             "filter on severity_text rather than level. "
+            "When prior conversation or incident context is provided, treat the new request as a follow-up. "
+            "Use the previous query, explanation, evidence, result totals, and sample rows to refine the search "
+            "instead of starting over. "
+            "If the follow-up asks for a likely fix, remediation, cause, impact, or next debugging step, answer "
+            "the operational incident question directly from the prior context and sample rows. Do not interpret "
+            "that as a request to change the LogsQL query unless the user explicitly asks to narrow, broaden, "
+            "filter, exclude, or otherwise modify the search. "
+            "For follow-up answers that do not require a different search, set query_changed to false, return the "
+            "current LogsQL unchanged in query, and put the answer in explanation/evidence. Set query_changed to "
+            "true only when the requested answer requires a changed query or result set. "
             "If you need an unobserved spelling variant, use it only as a free-text fallback and say that in evidence. "
             "Always quote structured field values, for example service:\"billing-api\" or "
             "kubernetes.pod_namespace:\"billing-production\". "
@@ -97,6 +118,7 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
                 "schema": schema,
             }
         },
+        "max_output_tokens": 1000,
     }
 
     async with httpx.AsyncClient(timeout=settings.request_timeout_seconds) as client:
@@ -113,9 +135,31 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
         raise HTTPException(status_code=502, detail="OpenAI response was not valid JSON") from exc
+    if parsed.get("query_changed") is False:
+        parsed["query"] = request.current_query or settings.default_query
+        parsed["steps"] = _build_trace_steps(discovery, parsed)
+        return AiQueryResponse.model_validate(parsed)
     parsed = _apply_observed_query_expansions(parsed, discovery, request.prompt)
     parsed["steps"] = _build_trace_steps(discovery, parsed)
     return AiQueryResponse.model_validate(parsed)
+
+
+def _compact_incident_context(context: dict[str, Any]) -> dict[str, Any]:
+    if not isinstance(context, dict) or not context:
+        return {}
+    compacted: dict[str, Any] = {}
+    for key in ("query", "explanation", "evidence", "relaxations", "totalLogs"):
+        value = context.get(key)
+        if value not in (None, "", []):
+            compacted[key] = value
+    rows = context.get("rows")
+    if isinstance(rows, list):
+        compacted["rows"] = [
+            _summarize_row(row)
+            for row in rows[:12]
+            if isinstance(row, dict)
+        ]
+    return compacted
 
 
 async def _discover_log_context(settings: Settings, request: AiQueryRequest, vl: VictoriaLogsClient | None) -> dict[str, Any]:
@@ -134,15 +178,26 @@ async def _discover_log_context(settings: Settings, request: AiQueryRequest, vl:
     if vl is None:
         return context
 
-    for field in fields[:18]:
+    async def load_field_values(field: str) -> tuple[str, list[dict[str, Any]]]:
+        if vl is None:
+            return field, []
         try:
             result = await vl.query(
                 "/select/logsql/field_values",
                 {"query": mapped_base_query, "field": field, "limit": 30},
             )
         except Exception:
-            continue
-        values = _extract_values(result)
+            return field, []
+        return field, _extract_values(result)
+
+    semaphore = asyncio.Semaphore(8)
+
+    async def bounded_load(field: str) -> tuple[str, list[dict[str, Any]]]:
+        async with semaphore:
+            return await load_field_values(field)
+
+    field_results = await asyncio.gather(*(bounded_load(field) for field in fields[:18]))
+    for field, values in field_results:
         if values:
             context["field_values"][field] = values
 
@@ -301,14 +356,12 @@ def _build_trace_steps(discovery: dict[str, Any], parsed: dict[str, Any]) -> lis
         {
             "title": "Scanned VictoriaLogs fields",
             "status": "done",
-            "tool": "/select/logsql/field_values",
             "detail": f"Checked {len(scanned_fields)} fields for real values that match the request.",
             "items": field_items,
         },
         {
             "title": "Sampled recent log rows",
             "status": "done",
-            "tool": "/select/logsql/query",
             "detail": f"Read {len(sample_rows)} recent rows to see how messages and Kubernetes metadata are represented.",
             "items": [json.dumps(row, ensure_ascii=False)[:180] for row in sample_rows[:3]],
         },
@@ -321,7 +374,6 @@ def _build_trace_steps(discovery: dict[str, Any], parsed: dict[str, Any]) -> lis
         {
             "title": "Generated and normalized LogsQL",
             "status": "done",
-            "tool": "OpenAI Responses API",
             "detail": parsed.get("explanation", ""),
             "items": [parsed.get("query", "")],
         },

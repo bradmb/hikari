@@ -71,6 +71,7 @@ MESSAGES = [
     "Validation warning on data import",
     "Deployment step completed",
 ]
+ROWS_CACHE: tuple[datetime, int, list[dict[str, Any]]] | None = None
 
 
 async def _form(request: Request) -> dict[str, str]:
@@ -80,7 +81,11 @@ async def _form(request: Request) -> dict[str, str]:
 
 
 def _rows(count: int = 15 * 500) -> list[dict[str, Any]]:
+    global ROWS_CACHE
     anchor = datetime.now(UTC).replace(second=0, microsecond=0) - timedelta(minutes=14)
+    if ROWS_CACHE and ROWS_CACHE[0] == anchor and ROWS_CACHE[1] == count:
+        return ROWS_CACHE[2]
+
     rows: list[dict[str, Any]] = []
     rng = random.Random(42)
 
@@ -138,6 +143,7 @@ def _rows(count: int = 15 * 500) -> list[dict[str, Any]]:
             }
         )
 
+    ROWS_CACHE = (anchor, count, rows)
     return rows
 
 
@@ -165,21 +171,32 @@ def _duration_seconds(value: str, fallback: int) -> int:
 
 
 def _matches(row: dict[str, Any], query: str) -> bool:
-    normalized = query.lower()
+    filter_query = query.split("|", 1)[0].strip()
+    normalized = filter_query.lower()
     if normalized.strip() in {"", "*", "_time:15m", "_time:5m"}:
         return True
 
-    checks = re.findall(r"([\w.-]+):\"?([\w./-]+)\"?", query)
-    for field, expected in checks:
+    def check_field(field: str, expected: str) -> bool:
         if field == "_time":
-            continue
+            return True
         actual = row.get(field)
-        if actual is None or str(actual).lower() != expected.lower():
+        return actual is not None and str(actual).lower() == expected.lower()
+
+    or_groups = re.findall(r"\(([^()]*\bOR\b[^()]*)\)", filter_query, re.IGNORECASE)
+    for group in or_groups:
+        group_checks = re.findall(r"([\w./-]+):\"?([\w./-]+)\"?", group)
+        if group_checks and not any(check_field(field, expected) for field, expected in group_checks):
+            return False
+        filter_query = filter_query.replace(f"({group})", " ")
+
+    checks = re.findall(r"([\w./-]+):\"?([\w./-]+)\"?", filter_query)
+    for field, expected in checks:
+        if not check_field(field, expected):
             return False
 
     terms = [
         term
-        for term in re.findall(r'"([^"]+)"|(\b[a-zA-Z][\w.-]{2,}\b)', query)
+        for term in re.findall(r'"([^"]+)"|(\b[a-zA-Z][\w.-]{2,}\b)', filter_query)
         for term in term
         if term and not term.startswith("_time") and term.lower() not in {"and", "or", "limit"}
     ]
@@ -265,7 +282,8 @@ async def tail(request: Request) -> StreamingResponse:
     async def stream():
         index = 0
         while True:
-            row = _filtered(query_text)[index % max(1, len(_filtered(query_text)))]
+            rows = _filtered(query_text)
+            row = rows[index % max(1, len(rows))]
             live_row = dict(row)
             live_row["_time"] = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
             yield json.dumps(live_row) + "\n"

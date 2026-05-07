@@ -18,7 +18,7 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { generateQuery, getAppConfig, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiStep, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
+import { generateQuery, getAppConfig, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiConversationMessage, type AiIncidentContext, type AiStep, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
 import "./styles.css";
 
 const emptyFieldMappings: FieldMappings = { defaultFields: [], aliases: {}, facets: [] };
@@ -37,19 +37,16 @@ const aiProgressTemplate: AiStep[] = [
   {
     title: "Scanning field values",
     status: "pending",
-    tool: "/select/logsql/field_values",
     detail: "Looking across service, host, environment, level, source, and Kubernetes fields."
   },
   {
     title: "Sampling log rows",
     status: "pending",
-    tool: "/select/logsql/query",
     detail: "Checking recent events to find how the thing you named is represented in real logs."
   },
   {
     title: "Asking AI to map the data",
     status: "pending",
-    tool: "OpenAI Responses API",
     detail: "Turning observed values into an editable LogsQL query."
   },
   {
@@ -311,6 +308,10 @@ type SeverityStats = {
   classifiedTotal: number;
   source: "facet" | "rows";
 };
+
+type HistogramSeverity = "error" | "warning" | "info" | "debug";
+
+type HistogramSeveritySeries = Record<HistogramSeverity, HitBucket[]>;
 
 function emptySeverityCounts(): SeverityCounts {
   return { error: 0, warning: 0, info: 0, debug: 0, other: 0 };
@@ -715,6 +716,18 @@ function quoteValue(value: string): string {
   return JSON.stringify(value);
 }
 
+function queryWithLevelBucket(query: string, severity: HistogramSeverity): string {
+  const variants: Record<HistogramSeverity, string[]> = {
+    error: ["error", "Error", "ERROR", "err", "fatal", "critical"],
+    warning: ["warning", "Warning", "WARN", "warn"],
+    info: ["info", "Info", "INFO", "information", "Information"],
+    debug: ["debug", "Debug", "DEBUG", "trace", "Trace", "verbose", "Verbose"]
+  };
+  const fields = ["level", "severity_text", "severity", "Level"];
+  const clauses = Array.from(new Set(fields.flatMap((field) => variants[severity].map((value) => `${field}:${quoteValue(value)}`))));
+  return `${query.trim() || defaultLogQuery} (${clauses.join(" OR ")})`;
+}
+
 function canonicalLevel(value: string): string {
   const normalized = value.trim().toLowerCase();
   if (["err", "error", "fatal", "critical"].includes(normalized)) return "error";
@@ -912,7 +925,7 @@ const fieldByEntity: Record<EntityKind, string> = {
   level: "level"
 };
 
-function inlineFormat(segment: string): React.ReactNode[] {
+function inlineFormat(segment: string, keyPrefix = "fmt"): React.ReactNode[] {
   const out: React.ReactNode[] = [];
   const pattern = /\*\*([^*]+)\*\*|`([^`]+)`|"([^"]+)"/g;
   let cursor = 0;
@@ -921,11 +934,11 @@ function inlineFormat(segment: string): React.ReactNode[] {
   while ((match = pattern.exec(segment)) !== null) {
     if (match.index > cursor) out.push(segment.slice(cursor, match.index));
     if (match[1] !== undefined) {
-      out.push(<strong key={`fmt-${key++}`}>{match[1]}</strong>);
+      out.push(<strong key={`${keyPrefix}-${key++}`}>{match[1]}</strong>);
     } else if (match[2] !== undefined) {
-      out.push(<code key={`fmt-${key++}`}>{match[2]}</code>);
+      out.push(<code key={`${keyPrefix}-${key++}`}>{match[2]}</code>);
     } else if (match[3] !== undefined) {
-      out.push(<q key={`fmt-${key++}`}>{match[3]}</q>);
+      out.push(<q key={`${keyPrefix}-${key++}`}>{match[3]}</q>);
     }
     cursor = match.index + match[0].length;
   }
@@ -969,7 +982,7 @@ function renderWithEntities(
   const parts: React.ReactNode[] = [];
   let cursor = 0;
   filtered.forEach((m, i) => {
-    if (m.start > cursor) parts.push(...inlineFormat(text.slice(cursor, m.start)));
+    if (m.start > cursor) parts.push(...inlineFormat(text.slice(cursor, m.start), `fmt-${cursor}`));
     parts.push(
       <button
         key={`ent-${i}`}
@@ -983,7 +996,7 @@ function renderWithEntities(
     );
     cursor = m.end;
   });
-  if (cursor < text.length) parts.push(...inlineFormat(text.slice(cursor)));
+  if (cursor < text.length) parts.push(...inlineFormat(text.slice(cursor), `fmt-${cursor}`));
   return parts;
 }
 
@@ -1132,17 +1145,49 @@ function relaxQuery(query: string): string | null {
   return null;
 }
 
+function compactIncidentRow(row: LogRow): LogRow {
+  const keys = [
+    "_time",
+    "level",
+    "service",
+    "host",
+    "environment",
+    "status",
+    "_msg",
+    "message",
+    "msg",
+    "kubernetes.pod_namespace",
+    "kubernetes.pod_name",
+    "kubernetes.container_name"
+  ];
+  const compact: LogRow = {};
+  keys.forEach((key) => {
+    const value = row[key];
+    if (value !== undefined && value !== null && String(value) !== "") compact[key] = value;
+  });
+  return compact;
+}
+
 function App() {
   const initialLogState = logStateFromUrl();
   const [query, setQuery] = useState(initialLogState.query);
   const [draftQuery, setDraftQuery] = useState(initialLogState.query);
   const [timeWindow, setTimeWindow] = useState<QueryWindow>(initialLogState.window);
   const [aiPrompt, setAiPrompt] = useState("");
+  const [followUpPrompt, setFollowUpPrompt] = useState("");
+  const [aiConversation, setAiConversation] = useState<AiConversationMessage[]>([]);
+  const [followUpThinking, setFollowUpThinking] = useState(false);
   const [aiExplanation, setAiExplanation] = useState("");
   const [aiEvidence, setAiEvidence] = useState<string[]>([]);
   const [aiRelaxations, setAiRelaxations] = useState<string[]>([]);
   const [rows, setRows] = useState<LogRow[]>([]);
   const [hits, setHits] = useState<HitBucket[]>([]);
+  const [histogramLevelHits, setHistogramLevelHits] = useState<HistogramSeveritySeries>({
+    error: [],
+    warning: [],
+    info: [],
+    debug: []
+  });
   const [hitStepMs, setHitStepMs] = useState(histogramStepMs(initialLogState.query, initialLogState.window));
   const [hitRange, setHitRange] = useState(() => timeRangeForQuery(initialLogState.query, initialLogState.window));
   const [fieldMappings, setFieldMappings] = useState<FieldMappings>(emptyFieldMappings);
@@ -1175,6 +1220,8 @@ function App() {
   const [dragRange, setDragRange] = useState<{ anchor: number; cursor: number } | null>(null);
   const histogramRef = useRef<HTMLElement | null>(null);
   const logScrollRef = useRef<HTMLDivElement | null>(null);
+  const conversationScrollRef = useRef<HTMLDivElement | null>(null);
+  const latestAssistantMessageRef = useRef<HTMLElement | null>(null);
   const tailRef = useRef<EventSource | null>(null);
   const aiCloseTimerRef = useRef<number | null>(null);
   const manualValueRef = useRef<HTMLInputElement | null>(null);
@@ -1295,9 +1342,13 @@ function App() {
           attempts += 1;
         }
       }
-      const [hitResult, fieldResult] = await Promise.all([
+      const [hitResult, fieldResult, errorHitResult, warningHitResult, infoHitResult, debugHitResult] = await Promise.all([
         getHits(backendQuery, durationToken(activeHitStepMs), activeWindow),
-        getFields(backendQuery, activeWindow)
+        getFields(backendQuery, activeWindow),
+        getHits(queryWithExpandedFilters(queryWithLevelBucket(activeQuery, "error"), activeFilters), durationToken(activeHitStepMs), activeWindow),
+        getHits(queryWithExpandedFilters(queryWithLevelBucket(activeQuery, "warning"), activeFilters), durationToken(activeHitStepMs), activeWindow),
+        getHits(queryWithExpandedFilters(queryWithLevelBucket(activeQuery, "info"), activeFilters), durationToken(activeHitStepMs), activeWindow),
+        getHits(queryWithExpandedFilters(queryWithLevelBucket(activeQuery, "debug"), activeFilters), durationToken(activeHitStepMs), activeWindow)
       ]);
       const nextRows = searchResult.rows.length ? rowsNewestFirst(searchResult.rows) : [];
       setRows(nextRows);
@@ -1318,6 +1369,12 @@ function App() {
       }
       setAiRelaxations(relaxations);
       setHits(normalizeHitBuckets(hitResult));
+      setHistogramLevelHits({
+        error: normalizeHitBuckets(errorHitResult),
+        warning: normalizeHitBuckets(warningHitResult),
+        info: normalizeHitBuckets(infoHitResult),
+        debug: normalizeHitBuckets(debugHitResult)
+      });
       const nextFields = (fieldResult.values ?? [])
         .map((item) => item.value.trim())
         .filter(Boolean)
@@ -1422,42 +1479,117 @@ function App() {
     void runSearch(draftQuery, { filters: representedFilters });
   }
 
-  async function askAi(promptOverride?: string) {
+  function scrollConversationToBottom() {
+    window.requestAnimationFrame(() => {
+      const element = conversationScrollRef.current;
+      if (!element) return;
+      element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
+    });
+  }
+
+  function scrollConversationToLatestAssistant() {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const container = conversationScrollRef.current;
+        const target = latestAssistantMessageRef.current;
+        if (!container || !target) return;
+        const containerTop = container.getBoundingClientRect().top;
+        const targetTop = target.getBoundingClientRect().top;
+        container.scrollTo({
+          top: container.scrollTop + targetTop - containerTop,
+          behavior: "smooth"
+        });
+      });
+    });
+  }
+
+  async function askAi(promptOverride?: string, options: { followUp?: boolean } = {}) {
     if (!aiEnabled) return;
     const promptToUse = (promptOverride ?? aiPrompt).trim();
     if (!promptToUse) return;
-    if (promptOverride) setAiPrompt(promptOverride);
+    if (promptOverride && !options.followUp) setAiPrompt(promptOverride);
     const startedFromExplore = mode === "explore";
+    const baseConversation = options.followUp ? aiConversation : [];
+    const conversation = options.followUp
+      ? [...baseConversation, { role: "user", content: promptToUse } satisfies AiConversationMessage].slice(-12)
+      : [];
+    const incidentContext: AiIncidentContext = options.followUp
+      ? {
+          query,
+          explanation: aiExplanation,
+          evidence: aiEvidence,
+          relaxations: aiRelaxations,
+          totalLogs,
+          rows: (rows.length > 0 ? rows : tailRecentRef.current.slice(-12).reverse()).slice(0, 12).map(compactIncidentRow)
+        }
+      : {};
     setLoading(true);
     setError("");
     if (aiCloseTimerRef.current !== null) window.clearTimeout(aiCloseTimerRef.current);
-    setAiModalOpen(true);
-    setAiRunning(true);
-    const timer = beginAiProgress();
+    if (options.followUp) {
+      setFollowUpPrompt("");
+      setAiConversation(conversation);
+      setFollowUpThinking(true);
+      scrollConversationToBottom();
+    } else {
+      setAiModalOpen(true);
+      setAiRunning(true);
+    }
+    const timer = options.followUp ? 0 : beginAiProgress();
     try {
-      const result = await generateQuery(promptToUse, draftQuery, fields);
-      window.clearInterval(timer);
-      setAiSteps((current) => current.map((step) => ({ ...step, status: "done" as const })));
-      setDraftQuery(result.query);
-      setAiExplanation(result.explanation || "");
-      setAiEvidence(result.evidence ?? []);
-      aiCloseTimerRef.current = window.setTimeout(() => {
-        setAiModalOpen(false);
-        aiCloseTimerRef.current = null;
-      }, 220);
+      const result = await generateQuery(promptToUse, draftQuery, fields, conversation, incidentContext);
+      if (!options.followUp) {
+        window.clearInterval(timer);
+        setAiSteps((current) => current.map((step) => ({ ...step, status: "done" as const })));
+      }
+      const queryChanged = result.query_changed !== false;
+      if (!options.followUp || queryChanged) {
+        setDraftQuery(result.query);
+        setAiExplanation(result.explanation || "");
+        setAiEvidence(result.evidence ?? []);
+      }
+      const assistantSummary = [
+        result.explanation,
+        (result.evidence?.length ?? 0) > 0 ? `Evidence: ${(result.evidence ?? []).slice(0, 3).join(" ")}` : "",
+        queryChanged ? `Generated query: ${result.query}` : `Query unchanged: ${result.query}`
+      ].filter(Boolean).join("\n\n");
+      const nextConversation: AiConversationMessage[] = [
+        ...conversation,
+        { role: "assistant", content: assistantSummary }
+      ];
+      setAiConversation(nextConversation.slice(-12));
+      scrollConversationToLatestAssistant();
+      if (!options.followUp) {
+        aiCloseTimerRef.current = window.setTimeout(() => {
+          setAiModalOpen(false);
+          aiCloseTimerRef.current = null;
+        }, 220);
+      }
       if (!startedFromExplore) setMode("answer");
-      setAppliedFilters([]);
-      void runSearch(result.query, { filters: [], limit: 2000 });
+      if (!options.followUp || queryChanged) {
+        setAppliedFilters([]);
+        void runSearch(result.query, { filters: [], limit: 2000 });
+      }
     } catch (err) {
-      window.clearInterval(timer);
+      if (!options.followUp) window.clearInterval(timer);
       const message = err instanceof Error ? err.message : "AI query generation failed";
       setError(message);
-      setAiSteps((current) => [
-        ...current.map((step) => (step.status === "running" ? { ...step, status: "error" as const } : step)),
-        { title: "AI request failed", status: "error", detail: message }
-      ]);
+      if (options.followUp) {
+        const failedConversation: AiConversationMessage[] = [
+          ...conversation,
+          { role: "assistant", content: `I couldn't complete that follow-up: ${message}` }
+        ];
+        setAiConversation(failedConversation.slice(-12));
+        scrollConversationToLatestAssistant();
+      } else {
+        setAiSteps((current) => [
+          ...current.map((step) => (step.status === "running" ? { ...step, status: "error" as const } : step)),
+          { title: "AI request failed", status: "error", detail: message }
+        ]);
+      }
     } finally {
       setAiRunning(false);
+      setFollowUpThinking(false);
       setLoading(false);
     }
   }
@@ -1595,34 +1727,51 @@ function App() {
     const bucketCount = 180;
     const minTime = hitRange.end - bucketCount * step;
     const totals = Array.from({ length: bucketCount }, () => 0);
+    const errors = Array.from({ length: bucketCount }, () => 0);
+    const warnings = Array.from({ length: bucketCount }, () => 0);
+    const infos = Array.from({ length: bucketCount }, () => 0);
+    const debugs = Array.from({ length: bucketCount }, () => 0);
 
-    hits.forEach((hit) => {
+    function addHit(hit: HitBucket, target: number[]) {
       const t = hitTimestamp(hit);
       if (Number.isNaN(t)) return;
       const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((t - minTime) / step)));
-      totals[idx] += countFromHit(hit);
-    });
+      target[idx] += countFromHit(hit);
+    }
+
+    hits.forEach((hit) => addHit(hit, totals));
+    histogramLevelHits.error.forEach((hit) => addHit(hit, errors));
+    histogramLevelHits.warning.forEach((hit) => addHit(hit, warnings));
+    histogramLevelHits.info.forEach((hit) => addHit(hit, infos));
+    histogramLevelHits.debug.forEach((hit) => addHit(hit, debugs));
 
     const maxTotal = Math.max(1, ...totals);
     const buckets = totals.map((total, i) => {
       const height = total === 0 ? 0 : Math.max(3, Math.round((total / maxTotal) * 72));
       const startTime = minTime + i * step;
       const endTime = startTime + step;
+      const errorCount = Math.min(total, errors[i]);
+      const warningCount = Math.min(Math.max(0, total - errorCount), warnings[i]);
+      const infoCount = Math.min(Math.max(0, total - errorCount - warningCount), infos[i]);
+      const debugCount = Math.min(Math.max(0, total - errorCount - warningCount - infoCount), debugs[i]);
+      const otherCount = Math.max(0, total - errorCount - warningCount - infoCount - debugCount);
+      const pct = (value: number) => total > 0 ? (value / total) * 100 : 0;
       return {
         key: i,
         total,
         height,
         startTime,
         endTime,
-        error: 0,
-        warning: 0,
-        info: total ? 100 : 0,
-        other: 0,
+        error: pct(errorCount),
+        warning: pct(warningCount),
+        info: pct(infoCount),
+        debug: pct(debugCount),
+        other: pct(otherCount),
         label: `${total} logs from ${formatBucketTime(startTime, step)} to ${formatBucketTime(endTime, step)}`
       };
     });
     return { buckets, maxTotal };
-  }, [hits, hitRange, hitStepMs]);
+  }, [hits, histogramLevelHits, hitRange, hitStepMs]);
 
   const selectedHistogramRange = dragRange && histogram.buckets.length
     ? {
@@ -1630,6 +1779,19 @@ function App() {
         end: Math.max(dragRange.anchor, dragRange.cursor)
       }
     : null;
+  const histogramTicks = useMemo(() => {
+    if (histogram.buckets.length === 0) return [];
+    const tickCount = 6;
+    return Array.from({ length: tickCount }, (_value, index) => {
+      const bucketIndex = Math.round((index / (tickCount - 1)) * (histogram.buckets.length - 1));
+      const bucket = histogram.buckets[bucketIndex];
+      return {
+        key: `${bucket.key}-${bucket.startTime}`,
+        label: formatBucketTime(bucket.startTime, hitStepMs),
+        left: `${(bucketIndex / Math.max(1, histogram.buckets.length - 1)) * 100}%`
+      };
+    });
+  }, [histogram.buckets, hitStepMs]);
 
   function bucketIndexFromClientX(clientX: number): number | null {
     const element = histogramRef.current;
@@ -2256,6 +2418,11 @@ function App() {
           <div className="histogram-y-max" aria-hidden="true">{histogram.maxTotal}</div>
           <div className="histogram-y-min" aria-hidden="true">0</div>
           <div className="histogram-x-label" aria-hidden="true">Time</div>
+          <div className="histogram-ticks" aria-hidden="true">
+            {histogramTicks.map((tick) => (
+              <span key={tick.key} style={{ left: tick.left }}>{tick.label}</span>
+            ))}
+          </div>
           {selectedHistogramRange && (
             <span
               className="histogram-selection"
@@ -2270,6 +2437,7 @@ function App() {
               {bar.error > 0 && <i className="seg error" style={{ flexBasis: `${bar.error}%` }} />}
               {bar.warning > 0 && <i className="seg warning" style={{ flexBasis: `${bar.warning}%` }} />}
               {bar.info > 0 && <i className="seg info" style={{ flexBasis: `${bar.info}%` }} />}
+              {bar.debug > 0 && <i className="seg debug" style={{ flexBasis: `${bar.debug}%` }} />}
               {bar.other > 0 && <i className="seg other" style={{ flexBasis: `${bar.other}%` }} />}
             </span>
           ))}
@@ -2482,6 +2650,56 @@ function App() {
               <h2>{aiPrompt || "—"}</h2>
             </div>
 
+            <div className="answer-conversation">
+              <div className="answer-conversation-head">
+                <span className="answer-section-label">Conversation</span>
+                <span>Follow-ups use this thread and the related log rows below.</span>
+              </div>
+              {(aiConversation.length > 0 || followUpThinking) && (
+                <div className="answer-message-list" ref={conversationScrollRef}>
+                  {aiConversation.map((messageItem, index) => (
+                    <article
+                      key={`ai-message-${index}`}
+                      className={`answer-message ${messageItem.role}`}
+                      ref={messageItem.role === "assistant" && index === aiConversation.length - 1 ? latestAssistantMessageRef : undefined}
+                    >
+                      <span>{messageItem.role === "user" ? "You" : "Hikari"}</span>
+                      <p>{messageItem.content}</p>
+                    </article>
+                  ))}
+                  {followUpThinking && (
+                    <article className="answer-message assistant thinking">
+                      <span>Hikari</span>
+                      <p>
+                        <i aria-hidden="true" />
+                        <i aria-hidden="true" />
+                        <i aria-hidden="true" />
+                        Thinking through the follow-up and checking the related log rows.
+                      </p>
+                    </article>
+                  )}
+                </div>
+              )}
+              <form
+                className="answer-followup"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void askAi(followUpPrompt, { followUp: true });
+                }}
+              >
+                <input
+                  value={followUpPrompt}
+                  onChange={(event) => setFollowUpPrompt(event.target.value)}
+                  placeholder="Ask a follow-up about these results"
+                  aria-label="Ask a follow-up"
+                />
+                <button type="submit" disabled={!followUpPrompt.trim() || loading || aiRunning}>
+                  <Sparkles size={14} />
+                  Ask
+                </button>
+              </form>
+            </div>
+
             <div className="answer-found">
               <div className="answer-found-head">
                 <div className="answer-found-orb">
@@ -2656,7 +2874,6 @@ function App() {
                     <div className="ai-step-body">
                       <div className="ai-step-title">
                         <strong>{step.title}</strong>
-                        {step.tool && <code>{step.tool}</code>}
                       </div>
                       {step.detail && <p>{step.detail}</p>}
                       {step.items && step.items.length > 0 && (
