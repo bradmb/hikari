@@ -15,6 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY api/hikari_api ./hikari_api
 COPY config ./config
 COPY --from=web /web/dist ./web
+COPY docs ./web/docs
 
 ENV HIKARI_VICTORIA_URL="http://localhost:9428"
 CMD ["uvicorn", "hikari_api.main:app", "--host", "0.0.0.0", "--port", "8000"]
