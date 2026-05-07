@@ -33,6 +33,10 @@ def _mapped_query(query: str) -> str:
     return with_copy_pipes(query, _field_mappings())
 
 
+def _ai_enabled() -> bool:
+    return bool(_settings().openai_api_key)
+
+
 def _transport_security_settings() -> TransportSecuritySettings:
     allowed_hosts = get_settings().mcp_allowed_hosts
     if not allowed_hosts:
@@ -55,11 +59,7 @@ def _transport_security_settings() -> TransportSecuritySettings:
 def create_fastmcp_server() -> FastMCP:
     return FastMCP(
         "Hikari",
-        instructions=(
-            "Hikari queries application logs stored in VictoriaLogs. Use field and value discovery before "
-            "writing narrow LogsQL. Use ai_search when the user's request needs natural-language mapping "
-            "to observed services, Kubernetes metadata, clients, environments, levels, or message text."
-        ),
+        instructions=_server_instructions(),
         streamable_http_path="/",
         stateless_http=True,
         json_response=True,
@@ -67,11 +67,21 @@ def create_fastmcp_server() -> FastMCP:
     )
 
 
-hikari_mcp = create_fastmcp_server()
-
-
 def _settings() -> Settings:
     return get_settings()
+
+
+def _server_instructions() -> str:
+    base = (
+        "Hikari queries application logs stored in VictoriaLogs. Use field and value discovery before "
+        "writing narrow LogsQL."
+    )
+    if not _ai_enabled():
+        return base
+    return (
+        f"{base} Use ai_search when the user's request needs natural-language mapping "
+        "to observed services, Kubernetes metadata, clients, environments, levels, or message text."
+    )
 
 
 def _client(settings: Settings | None = None) -> VictoriaLogsClient:
@@ -88,6 +98,9 @@ def _query_with_limit(query: str, limit: int) -> str:
     if "| limit" in query.lower():
         return query
     return f"{query} | limit {limit}"
+
+
+hikari_mcp = create_fastmcp_server()
 
 
 def _rows(result: Any) -> list[dict[str, Any]]:
@@ -184,18 +197,32 @@ def _summary_spec(key: str, config: dict[str, Any]) -> dict[str, Any]:
     description="Explain what Hikari is, how its log fields map to the UI, and which MCP tools to use.",
 )
 async def get_instructions() -> dict[str, Any]:
+    ai_available = _ai_enabled()
+    workflow = [
+        "Start with summarize_window to understand the current time window.",
+        "Use get_field_values or get_facets to inspect specific dimensions before narrowing a query.",
+        "Use query_logs when you know the LogsQL to run.",
+        "Use tail_logs only for a short bounded sample of fresh activity.",
+    ]
+    tools = {
+        "summarize_window": "UI-like overview of time buckets plus Service, Hostname, Level, Namespace, and Pod counts.",
+        "query_logs": "Run bounded raw LogsQL.",
+        "get_facets": "Return grouped counts for selected fields.",
+        "get_fields": "List available field names.",
+        "get_field_values": "List values for one field.",
+        "get_hits": "Return hit counts over time.",
+        "tail_logs": "Return a bounded live-tail sample.",
+    }
+    if ai_available:
+        workflow.insert(3, "Use ai_search when a human phrase needs to be mapped to observed services, namespaces, pods, levels, or message text.")
+        tools["ai_search"] = "Generate LogsQL from natural language and execute it."
     return {
         "system": "Hikari",
         "backend": "VictoriaLogs",
         "default_query": "_time:15m",
+        "ai_enabled": ai_available,
         "purpose": "Hikari is a log investigation system for querying Kubernetes and application logs.",
-        "workflow": [
-            "Start with summarize_window to understand the current time window.",
-            "Use get_field_values or get_facets to inspect specific dimensions before narrowing a query.",
-            "Use query_logs when you know the LogsQL to run.",
-            "Use ai_search when a human phrase needs to be mapped to observed services, namespaces, pods, levels, or message text.",
-            "Use tail_logs only for a short bounded sample of fresh activity.",
-        ],
+        "workflow": workflow,
         "field_glossary": {
             "Service": "The app/service identity resolved through the configured service field aliases.",
             "Hostname": "The host or node that emitted the log resolved through the configured host field aliases.",
@@ -206,16 +233,7 @@ async def get_instructions() -> dict[str, Any]:
             "Source": "Log source or emitter when present.",
             "Time buckets": "Minute-by-minute hit counts for the query window.",
         },
-        "tools": {
-            "summarize_window": "UI-like overview of time buckets plus Service, Hostname, Level, Namespace, and Pod counts.",
-            "query_logs": "Run bounded raw LogsQL.",
-            "ai_search": "Generate LogsQL from natural language and execute it.",
-            "get_facets": "Return grouped counts for selected fields.",
-            "get_fields": "List available field names.",
-            "get_field_values": "List values for one field.",
-            "get_hits": "Return hit counts over time.",
-            "tail_logs": "Return a bounded live-tail sample.",
-        },
+        "tools": tools,
     }
 
 
@@ -404,6 +422,12 @@ async def get_facets(
     description="Guide an agent through a Hikari log investigation.",
 )
 def investigate_hikari_logs(request: str, starting_query: str = "_time:15m") -> str:
+    ai_instruction = (
+        "Use ai_search when the request names a product, service, client, symptom, or natural-language condition "
+        "that needs mapping to observed field values or message text. "
+        if _ai_enabled()
+        else ""
+    )
     return (
         f"Investigate Hikari logs for: {request}\n"
         f"Start from LogsQL: {starting_query}\n\n"
@@ -411,8 +435,7 @@ def investigate_hikari_logs(request: str, starting_query: str = "_time:15m") -> 
         "to see the active time buckets, Service, Hostname, Level, Namespace, and Pod counts. "
         "Use get_fields and get_field_values to discover additional structured data before narrowing. "
         "Use query_logs for exact LogsQL searches, get_hits for time distribution, and get_facets for grouping. "
-        "Use ai_search when the request names a product, service, client, symptom, or natural-language condition "
-        "that needs mapping to observed field values or message text. Keep returned rows bounded and cite the "
+        f"{ai_instruction}Keep returned rows bounded and cite the "
         "query and evidence used."
     )
 
@@ -420,7 +443,7 @@ def investigate_hikari_logs(request: str, starting_query: str = "_time:15m") -> 
 def create_hikari_mcp() -> FastMCP:
     server = FastMCP(
         "Hikari",
-        instructions=hikari_mcp.instructions,
+        instructions=_server_instructions(),
         streamable_http_path="/",
         stateless_http=True,
         json_response=True,
@@ -438,12 +461,13 @@ def create_hikari_mcp() -> FastMCP:
         title="Query Logs",
         description="Run a bounded VictoriaLogs LogsQL query and return rows plus basic stats.",
     )
-    server.add_tool(
-        ai_search,
-        name="ai_search",
-        title="AI Search",
-        description="Generate LogsQL from a natural-language prompt, execute it, and return explanation, evidence, and rows.",
-    )
+    if _ai_enabled():
+        server.add_tool(
+            ai_search,
+            name="ai_search",
+            title="AI Search",
+            description="Generate LogsQL from a natural-language prompt, execute it, and return explanation, evidence, and rows.",
+        )
     server.add_tool(
         tail_logs,
         name="tail_logs",

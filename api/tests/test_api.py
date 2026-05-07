@@ -11,6 +11,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from hikari_api import ai
 from hikari_api import hikari_mcp
+from hikari_api.field_mappings import with_copy_pipes
 from hikari_api.main import app
 from hikari_api.models import AiQueryRequest, AiQueryResponse
 from hikari_api.settings import Settings, get_settings
@@ -110,6 +111,17 @@ def override_settings() -> Settings:
     )
 
 
+def override_settings_without_ai() -> Settings:
+    return Settings(
+        HIKARI_VICTORIA_URL="http://victorialogs",
+        HIKARI_DEFAULT_QUERY="_time:15m",
+        HIKARI_DEFAULT_FIELDS="service,level",
+        HIKARI_FIELD_MAPPINGS=TEST_FIELD_MAPPINGS,
+        _env_file=None,
+        OPENAI_API_KEY="",
+    )
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
@@ -162,6 +174,38 @@ def test_hits_facets_and_field_values():
     assert hits.json()["values"][0]["hits"] == 4
     assert facets.json()["facets"][0]["field"] == "service"
     assert values.json()["values"][0]["value"] == "api"
+
+
+def test_api_facets_apply_configured_copy_pipes():
+    fake = FakeVictoriaLogsClient()
+
+    def override_fake_client() -> FakeVictoriaLogsClient:
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/facets", json={"query": "_time:15m", "fields": ["service", "host"]})
+    assert response.status_code == 200
+    facets_call = next(data for path, data in fake.calls if path == "/select/logsql/facets")
+    assert "copy service_name as service" in facets_call["query"]
+    assert "copy host_name as host" in facets_call["query"]
+    assert facets_call["field"] == ["service", "host"]
+
+
+def test_config_reports_ai_disabled_without_openai_key():
+    app.dependency_overrides[get_settings] = override_settings_without_ai
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/config")
+    assert response.status_code == 200
+    assert response.json()["aiEnabled"] is False
+
+
+def test_configured_facet_aliases_copy_host_and_service_names():
+    query = with_copy_pipes("_time:15m", TEST_FIELD_MAPPINGS)
+    assert "copy service_name as service" in query
+    assert "copy host_name as host" in query
 
 
 def test_tail_errors_are_streamed_as_sse_error_events():
@@ -389,6 +433,7 @@ class FakeMcpVictoriaLogsClient:
 
 @pytest.mark.anyio
 async def test_mcp_streamable_http_lists_and_calls_query_tool(monkeypatch):
+    monkeypatch.setattr(hikari_mcp, "_settings", override_settings)
     monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: FakeMcpVictoriaLogsClient())
     transport = ASGITransport(app=app)
 
@@ -421,7 +466,27 @@ async def test_mcp_streamable_http_lists_and_calls_query_tool(monkeypatch):
 
 
 @pytest.mark.anyio
+async def test_mcp_omits_ai_search_without_openai_key(monkeypatch):
+    monkeypatch.setattr(hikari_mcp, "_settings", override_settings_without_ai)
+    monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: FakeMcpVictoriaLogsClient())
+    transport = ASGITransport(app=app)
+
+    async with httpx.AsyncClient(transport=transport, base_url="http://localhost:8000") as http_client:
+        async with streamable_http_client(
+            "http://localhost:8000/mcp/",
+            http_client=http_client,
+            terminate_on_close=False,
+        ) as (read_stream, write_stream, _):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                tools = await session.list_tools()
+
+    assert "ai_search" not in {tool.name for tool in tools.tools}
+
+
+@pytest.mark.anyio
 async def test_mcp_streamable_http_accepts_no_slash_url(monkeypatch):
+    monkeypatch.setattr(hikari_mcp, "_settings", override_settings)
     monkeypatch.setattr(hikari_mcp, "_client", lambda settings=None: FakeMcpVictoriaLogsClient())
     transport = ASGITransport(app=app)
 

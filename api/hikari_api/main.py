@@ -46,6 +46,10 @@ def mapped_query(query: str, settings: Settings) -> str:
     return with_copy_pipes(query, get_field_mappings(settings))
 
 
+def ai_enabled(settings: Settings) -> bool:
+    return bool(settings.openai_api_key)
+
+
 @app.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
@@ -61,6 +65,7 @@ def config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
         "default_query": settings.default_query,
         "fieldMappings": get_field_mappings(settings),
+        "aiEnabled": ai_enabled(settings),
     }
 
 

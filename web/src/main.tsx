@@ -1129,6 +1129,7 @@ function App() {
   const [hitRange, setHitRange] = useState(() => timeRangeForQuery(initialLogState.query, initialLogState.window));
   const [fieldMappings, setFieldMappings] = useState<FieldMappings>(emptyFieldMappings);
   const [configReady, setConfigReady] = useState(false);
+  const [aiEnabled, setAiEnabled] = useState<boolean | null>(null);
   const [fields, setFields] = useState<string[]>([]);
   const [facets, setFacets] = useState<Record<string, ValueHit[]>>({});
   const [facetCache, setFacetCache] = useState<Record<string, ValueHit[]>>({});
@@ -1402,6 +1403,7 @@ function App() {
   }
 
   async function askAi(promptOverride?: string) {
+    if (!aiEnabled) return;
     const promptToUse = (promptOverride ?? aiPrompt).trim();
     if (!promptToUse) return;
     if (promptOverride) setAiPrompt(promptOverride);
@@ -1487,12 +1489,16 @@ function App() {
         setActiveFieldMappings(config.fieldMappings);
         setFieldMappings(config.fieldMappings);
         setFields(config.fieldMappings.defaultFields);
+        setAiEnabled(config.aiEnabled);
+        if (!config.aiEnabled && mode !== "explore") setMode("explore");
         setConfigReady(true);
       })
       .catch(() => {
         if (cancelled) return;
         setActiveFieldMappings(emptyFieldMappings);
         setFieldMappings(emptyFieldMappings);
+        setAiEnabled(false);
+        if (mode !== "explore") setMode("explore");
         setConfigReady(true);
       });
     return () => {
@@ -1539,7 +1545,7 @@ function App() {
 
   useEffect(() => {
     tailRef.current?.close();
-    const shouldStream = !hasTimeWindow(timeWindow) && (live || mode === "welcome");
+    const shouldStream = !hasTimeWindow(timeWindow) && (live || (aiEnabled === true && mode === "welcome"));
     if (!shouldStream) {
       setLiveStatus("off");
       return;
@@ -1977,7 +1983,7 @@ function App() {
 
   return (
     <>
-    <div className={`shell ${mode !== "explore" ? "shell-dimmed" : ""} ${liveTailMode ? "shell-live-tail" : ""}`} aria-hidden={mode !== "explore"}>
+    <div className={`shell ${mode !== "explore" && aiEnabled === true ? "shell-dimmed" : ""} ${liveTailMode ? "shell-live-tail" : ""}`} aria-hidden={mode !== "explore" && aiEnabled === true}>
       <header className="app-chrome">
         <div className="product">
           <div className="mark" aria-label="Hikari"><HikariSparkle size={20} /></div>
@@ -1987,7 +1993,7 @@ function App() {
           </div>
         </div>
         <div className="time-controls">
-          {mode === "explore" && (
+          {mode === "explore" && aiEnabled === true && (
             <button className="ask-ai-button" onClick={() => setMode("welcome")} title="Ask AI">
               <Sparkles size={14} />
               <span>Ask AI</span>
@@ -2141,21 +2147,23 @@ function App() {
       )}
 
       <main className="workspace">
-        <section className="ai-row">
-          <Bot size={17} />
-          <input
-            value={aiPrompt}
-            onChange={(event) => setAiPrompt(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") void askAi();
-            }}
-            placeholder="Describe the logs you want"
-          />
-          <button onClick={() => void askAi()} disabled={!aiPrompt.trim() || loading}>
-            <Sparkles size={16} />
-            <span>Analyze</span>
-          </button>
-        </section>
+        {aiEnabled === true && (
+          <section className="ai-row">
+            <Bot size={17} />
+            <input
+              value={aiPrompt}
+              onChange={(event) => setAiPrompt(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") void askAi();
+              }}
+              placeholder="Describe the logs you want"
+            />
+            <button onClick={() => void askAi()} disabled={!aiPrompt.trim() || loading}>
+              <Sparkles size={16} />
+              <span>Analyze</span>
+            </button>
+          </section>
+        )}
 
         <section className={`stream-status ${liveStatus}`}>
           {liveStatus === "streaming" ? <CheckCircle2 size={15} /> : <Filter size={15} />}
@@ -2322,7 +2330,7 @@ function App() {
 
     </div>
 
-    {mode === "welcome" && (
+    {mode === "welcome" && aiEnabled === true && (
       <div className="welcome" role="dialog" aria-label="Ask Hikari">
         <div className="welcome-constellation" ref={constellationRef} aria-hidden="true" />
         <header className="welcome-chrome">
@@ -2399,7 +2407,7 @@ function App() {
       </div>
     )}
 
-    {mode === "answer" && !aiModalOpen && (
+    {mode === "answer" && aiEnabled === true && !aiModalOpen && (
       <div className="answer" role="region" aria-label="AI response">
         <header className="answer-chrome">
           <div className="product">
