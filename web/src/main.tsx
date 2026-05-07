@@ -1303,6 +1303,7 @@ function App() {
         .filter(Boolean)
         .slice(0, 24);
       setFields(Array.from(new Set([...fieldMappings.defaultFields, ...nextFields])));
+      void refreshFacets(activeQuery, activeFilters, activeWindow);
       return { query: activeQuery, relaxations };
     } catch (err) {
       setError(err instanceof Error ? err.message : "Search failed");
@@ -1312,11 +1313,11 @@ function App() {
     }
   }
 
-  async function loadFacet(field: string) {
+  async function loadFacet(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow) {
     try {
       const fieldsToLoad = aliasFieldsForFilter(field);
-      const backendQuery = queryWithExpandedFilters(query, appliedFilters);
-      const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, timeWindow)));
+      const backendQuery = queryWithExpandedFilters(baseQuery, filters);
+      const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, window)));
       const nextValues = mergeFacetValues(field, ...results.map((result) => result.values));
       setFacets((current) => ({
         ...current,
@@ -1329,6 +1330,10 @@ function App() {
     } catch {
       setFacets((current) => ({ ...current, [field]: [] }));
     }
+  }
+
+  async function refreshFacets(baseQuery = query, filters = appliedFilters, window = timeWindow) {
+    await Promise.all(fieldMappings.facets.map(({ field }) => loadFacet(field, baseQuery, filters, window)));
   }
 
   function rowFacetValues(field: string): ValueHit[] {
@@ -1524,12 +1529,6 @@ function App() {
       if (aiCloseTimerRef.current !== null) window.clearTimeout(aiCloseTimerRef.current);
     };
   }, []);
-
-  useEffect(() => {
-    fieldMappings.facets.forEach(({ field }) => {
-      void loadFacet(field);
-    });
-  }, [query, timeWindow, appliedFilters, fieldMappings]);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
@@ -1974,10 +1973,11 @@ function App() {
   const activePreset = presetForQuery(draftQuery);
   const timeButtonLabel = hasTimeWindow(timeWindow) ? formatTimeWindow(timeWindow) : activePreset.label;
   const timeButtonBadge = hasTimeWindow(timeWindow) ? "range" : activePreset.shortLabel;
+  const liveTailMode = mode === "explore" && live && !hasTimeWindow(timeWindow);
 
   return (
     <>
-    <div className={`shell ${mode !== "explore" ? "shell-dimmed" : ""}`} aria-hidden={mode !== "explore"}>
+    <div className={`shell ${mode !== "explore" ? "shell-dimmed" : ""} ${liveTailMode ? "shell-live-tail" : ""}`} aria-hidden={mode !== "explore"}>
       <header className="app-chrome">
         <div className="product">
           <div className="mark" aria-label="Hikari"><HikariSparkle size={20} /></div>
@@ -2073,70 +2073,72 @@ function App() {
         )}
       </section>
 
-      <aside className="facets">
-        <div className="facet-search">
-          <Search size={15} />
-          <input
-            value={facetSearch}
-            onChange={(event) => setFacetSearch(event.target.value)}
-            placeholder="Search facets"
-            aria-label="Search facets"
-          />
-        </div>
-
-        <div className="facet-summary">
-          <span>Showing {visibleFacetDefinitions.length} of {facetDefinitions.length}</span>
-        </div>
-
-        <section className="filter-panel">
-          <div className="facet-category">Core</div>
-          <div className="manual-filter">
-            <select value={manualField} onChange={(event) => setManualField(event.target.value)} aria-label="Filter field">
-              {fields.map((field) => <option key={field} value={field}>{field}</option>)}
-            </select>
+      {!liveTailMode && (
+        <aside className="facets">
+          <div className="facet-search">
+            <Search size={15} />
             <input
-              ref={manualValueRef}
-              value={manualValue}
-              onChange={(event) => setManualValue(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  submitManualFilter();
-                }
-              }}
-              placeholder="value"
-              aria-label="Filter value"
+              value={facetSearch}
+              onChange={(event) => setFacetSearch(event.target.value)}
+              placeholder="Search facets"
+              aria-label="Search facets"
             />
-            <button
-              title="Apply filter"
-              onClick={submitManualFilter}
-            >
-              <Plus size={15} />
-            </button>
           </div>
-          <div className="facet-list">
-            {visibleFacetDefinitions.map(({ field, label }) => {
-              const values = visibleValuesForField(field, label);
-              if (values.length === 0) return null;
-              return (
-                <details key={field} open={Boolean(facetSearch.trim()) || ["environment", "service", "host", "level"].includes(field)}>
-                  <summary>
-                    <span>{label}</span>
-                    <CheckCircle2 size={13} />
-                  </summary>
-                  {values.slice(0, 10).map((item) => (
-                    <button key={`${field}-${item.value}`} onClick={() => toggleFilter(field, item.value)}>
-                      <input type="checkbox" checked={appliedFilters.some((filter) => filter.field === field && filter.value === item.value)} readOnly />
-                      <i className={`facet-swatch ${field === "level" ? item.value.toLowerCase() : ""}`} />
-                      <span>{item.value}</span>
-                      <em>{item.hits}</em>
-                    </button>
-                  ))}
-                </details>
-              );
-            })}
+
+          <div className="facet-summary">
+            <span>Showing {visibleFacetDefinitions.length} of {facetDefinitions.length}</span>
           </div>
-        </section>
-      </aside>
+
+          <section className="filter-panel">
+            <div className="facet-category">Core</div>
+            <div className="manual-filter">
+              <select value={manualField} onChange={(event) => setManualField(event.target.value)} aria-label="Filter field">
+                {fields.map((field) => <option key={field} value={field}>{field}</option>)}
+              </select>
+              <input
+                ref={manualValueRef}
+                value={manualValue}
+                onChange={(event) => setManualValue(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    submitManualFilter();
+                  }
+                }}
+                placeholder="value"
+                aria-label="Filter value"
+              />
+              <button
+                title="Apply filter"
+                onClick={submitManualFilter}
+              >
+                <Plus size={15} />
+              </button>
+            </div>
+            <div className="facet-list">
+              {visibleFacetDefinitions.map(({ field, label }) => {
+                const values = visibleValuesForField(field, label);
+                if (values.length === 0) return null;
+                return (
+                  <details key={field} open={Boolean(facetSearch.trim()) || ["environment", "service", "host", "level"].includes(field)}>
+                    <summary>
+                      <span>{label}</span>
+                      <CheckCircle2 size={13} />
+                    </summary>
+                    {values.slice(0, 10).map((item) => (
+                      <button key={`${field}-${item.value}`} onClick={() => toggleFilter(field, item.value)}>
+                        <input type="checkbox" checked={appliedFilters.some((filter) => filter.field === field && filter.value === item.value)} readOnly />
+                        <i className={`facet-swatch ${field === "level" ? item.value.toLowerCase() : ""}`} />
+                        <span>{item.value}</span>
+                        <em>{item.hits}</em>
+                      </button>
+                    ))}
+                  </details>
+                );
+              })}
+            </div>
+          </section>
+        </aside>
+      )}
 
       <main className="workspace">
         <section className="ai-row">

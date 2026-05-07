@@ -127,6 +127,10 @@ button {
   background: var(--bg-app);
 }
 
+.shell-live-tail {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .app-chrome,
 .global-query {
   grid-column: 1 / -1;
@@ -795,6 +799,10 @@ summary svg {
     var(--bg-base);
   overflow: hidden;
   position: relative;
+}
+
+.shell-live-tail .workspace {
+  grid-column: 1;
 }
 
 .workspace::before {
