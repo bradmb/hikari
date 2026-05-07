@@ -1260,6 +1260,7 @@ function App() {
   const manualValueRef = useRef<HTMLInputElement | null>(null);
   const tailSeenRef = useRef<Set<string>>(new Set());
   const tailQueueRef = useRef<LogRow[]>([]);
+  const tailRowsBufferRef = useRef<LogRow[]>([]);
   const constellationRef = useRef<HTMLDivElement | null>(null);
   const tailRecentRef = useRef<LogRow[]>([]);
   const selectedEventIdRef = useRef<string | null>(selectedEventIdFromUrl());
@@ -1780,6 +1781,7 @@ function App() {
 
   useEffect(() => {
     tailRef.current?.close();
+    tailRowsBufferRef.current = [];
     const shouldStream = !hasTimeWindow(timeWindow) && (live || (aiEnabled === true && mode === "welcome"));
     if (!shouldStream) {
       setLiveStatus("off");
@@ -1788,17 +1790,25 @@ function App() {
     setLiveStatus("connecting");
     const source = new EventSource(tailUrl(queryWithExpandedFilters(query, appliedFilters)));
     tailRef.current = source;
+    const flushTailRows = () => {
+      const pending = tailRowsBufferRef.current;
+      if (pending.length === 0) return;
+      tailRowsBufferRef.current = [];
+      setRows((current) => [...pending.reverse(), ...current].slice(0, 500));
+    };
+    const flushInterval = window.setInterval(flushTailRows, 120);
     source.onopen = () => setLiveStatus("streaming");
     source.onmessage = (event) => {
       try {
-        const row = JSON.parse(event.data) as LogRow;
-        setRows((current) => [row, ...current].slice(0, 500));
+        tailRowsBufferRef.current.push(JSON.parse(event.data) as LogRow);
       } catch {
-        setRows((current) => [{ _time: new Date().toISOString(), _msg: event.data }, ...current].slice(0, 500));
+        tailRowsBufferRef.current.push({ _time: new Date().toISOString(), _msg: event.data });
       }
     };
     source.onerror = () => setLiveStatus(source.readyState === EventSource.CLOSED ? "error" : "reconnecting");
     return () => {
+      window.clearInterval(flushInterval);
+      flushTailRows();
       source.close();
       setLiveStatus("off");
     };
