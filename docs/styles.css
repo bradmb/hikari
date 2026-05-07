@@ -709,6 +709,7 @@ h1 {
   color: var(--text-mono, #d6dae3);
   font-family: "Cascadia Code", Consolas, monospace;
   font-size: 0.95em;
+  overflow-wrap: anywhere;
 }
 
 .reference-table {
@@ -745,7 +746,11 @@ h1 {
   color: #b2bac7;
 }
 
-@media (max-width: 820px) {
+.reference-table span code {
+  display: inline;
+}
+
+@media (max-width: 1120px) {
   .reference-table > div,
   .reference-table.compact > div {
     grid-template-columns: 1fr;
@@ -760,7 +765,10 @@ h1 {
     display: block;
     width: fit-content;
     max-width: 100%;
-    overflow-wrap: anywhere;
+  }
+
+  .reference-table span code {
+    display: inline;
   }
 }
 
