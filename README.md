@@ -76,7 +76,7 @@ Field and facet mappings live in `config/field-mappings.json`. Use this file to 
 
 For example, `service.name` and `service_name` can both populate the canonical `service` facet, while `host.name` and `host_name` can populate `host`. Hikari applies those aliases to backend VictoriaLogs requests with hidden LogsQL `copy` pipes, so users still see clean queries like `_time:15m service:="api"`.
 
-See `INSTALLATION.md` for the full mapping format and Kubernetes configuration notes.
+The Helm chart can mount this configuration from `fieldMappings.config` as `/app/config/field-mappings.json`. See `INSTALLATION.md` for the full mapping format and Kubernetes values example.
 
 ## MCP
 

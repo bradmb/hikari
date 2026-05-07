@@ -156,6 +156,66 @@ docker compose up mock-victorialogs api web</code></pre>
               for facets that should appear in <code>summarize_window</code> and default <code>get_facets</code>
               output.
             </p>
+            <h3>Configure facets with Helm</h3>
+            <p>
+              The Helm chart creates a ConfigMap from <code>fieldMappings.config</code> and mounts it at
+              <code>/app/config/field-mappings.json</code>. The chart also sets
+              <code>HIKARI_FIELD_MAPPINGS_FILE</code> to that path.
+            </p>
+            <pre class="code-sample"><code>fieldMappings:
+  enabled: true
+  config:
+    defaultFields:
+      - environment
+      - service
+      - service_name
+      - host
+      - host_name
+      - level
+      - kubernetes.pod_namespace
+      - kubernetes.pod_name
+    aliases:
+      service:
+        - service
+        - service.name
+        - service_name
+        - kubernetes.container_name
+      host:
+        - host
+        - host.name
+        - host_name
+        - hostname
+        - kubernetes.pod_node_name
+      level:
+        - level
+        - severity_text
+    facets:
+      - field: environment
+        label: Environment
+      - field: service
+        label: Service
+        summary: true
+      - field: host
+        label: Host
+        summary: true
+      - field: level
+        label: Level
+        summary: true
+      - field: kubernetes.pod_namespace
+        key: namespace
+        label: Namespace
+        summary: true
+      - field: kubernetes.pod_name
+        key: pod
+        label: Pod
+        summary: true</code></pre>
+            <pre class="code-sample"><code>helm upgrade --install hikari ./k8s/helm/hikari `
+  --namespace hikari `
+  --create-namespace `
+  --values ./hikari-values.yaml `
+  --set image.repository=ghcr.io/bradmb/hikari `
+  --set-string image.tag=latest `
+  --set env.victoriaUrl=http://victorialogs.example.svc:9428</code></pre>
           </section>
 
           <section id="kubernetes" class="docs-section">

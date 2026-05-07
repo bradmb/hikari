@@ -154,7 +154,73 @@ Use `facets` to choose the canonical fields shown in the left sidebar and MCP su
 
 Each facet `field` is the canonical field Hikari displays and filters on. The `key` is optional and provides a shorter MCP summary key. Set `summary: true` for facets that should appear in MCP `summarize_window` and default `get_facets` output.
 
-In Kubernetes, the Helm chart mounts this JSON through a ConfigMap under `fieldMappings.config`.
+In Kubernetes, the Helm chart mounts this JSON through a ConfigMap generated from `fieldMappings.config`.
+The chart sets `HIKARI_FIELD_MAPPINGS_FILE` to `/app/config/field-mappings.json`, so the mounted ConfigMap
+becomes the active mapping file.
+
+Create a values file for your schema:
+
+```yaml
+fieldMappings:
+  enabled: true
+  config:
+    defaultFields:
+      - environment
+      - service
+      - service_name
+      - host
+      - host_name
+      - level
+      - kubernetes.pod_namespace
+      - kubernetes.pod_name
+    aliases:
+      service:
+        - service
+        - service.name
+        - service_name
+        - kubernetes.container_name
+      host:
+        - host
+        - host.name
+        - host_name
+        - hostname
+        - kubernetes.pod_node_name
+      level:
+        - level
+        - severity_text
+    facets:
+      - field: environment
+        label: Environment
+      - field: service
+        label: Service
+        summary: true
+      - field: host
+        label: Host
+        summary: true
+      - field: level
+        label: Level
+        summary: true
+      - field: kubernetes.pod_namespace
+        key: namespace
+        label: Namespace
+        summary: true
+      - field: kubernetes.pod_name
+        key: pod
+        label: Pod
+        summary: true
+```
+
+Apply it with Helm:
+
+```powershell
+helm upgrade --install hikari ./k8s/helm/hikari `
+  --namespace hikari `
+  --create-namespace `
+  --values ./hikari-values.yaml `
+  --set image.repository=ghcr.io/bradmb/hikari `
+  --set-string image.tag=latest `
+  --set env.victoriaUrl=http://victorialogs.example.svc:9428
+```
 
 For non-Helm deployments, set `HIKARI_FIELD_MAPPINGS_FILE` to a mounted JSON file. `HIKARI_FIELD_MAPPINGS` can provide inline JSON overrides when a file mount is inconvenient.
 
