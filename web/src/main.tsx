@@ -470,6 +470,16 @@ function message(row: LogRow): string {
   return "";
 }
 
+function levelFromMessageText(text: string): string {
+  if (!text) return "";
+  const normalized = text.toLowerCase();
+  if (/(^|[\s[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=/.test(normalized)) return "error";
+  if (/(^|[\s[])(warning|warn)([\]\s:|,-]|$)|\swarning=/.test(normalized)) return "warning";
+  if (/(^|[\s[])(debug|trace|verbose)([\]\s:|,-]|$)/.test(normalized)) return "debug";
+  if (/(^|[\s[])(info|information)([\]\s:|,-]|$)/.test(normalized)) return "info";
+  return "";
+}
+
 function timeValue(row: LogRow): string {
   return asText(row._time ?? row.timestamp ?? row.time);
 }
@@ -716,7 +726,7 @@ function levelLabel(level: string): string {
 }
 
 function levelValue(row: LogRow): string {
-  return firstFieldValue(row, aliasFieldsForFilter("level")) || "info";
+  return firstFieldValue(row, aliasFieldsForFilter("level")) || levelFromMessageText(message(row)) || "unknown";
 }
 
 function fieldValue(row: LogRow, field: string): string {
@@ -754,8 +764,20 @@ function queryWithLevelBucket(query: string, severity: HistogramSeverity): strin
     info: ["info", "Info", "INFO", "information", "Information"],
     debug: ["debug", "Debug", "DEBUG", "trace", "Trace", "verbose", "Verbose"]
   };
-  const fields = ["level", "severity_text", "severity", "Level"];
-  const clauses = Array.from(new Set(fields.flatMap((field) => variants[severity].map((value) => `${field}:${quoteValue(value)}`))));
+  const messageVariants: Record<HistogramSeverity, string[]> = {
+    error: ["[error]", "[err]", "[fatal]", "[critical]", " ERR ", " ERROR ", " ERROR:", " error=", " fatal ", " critical "],
+    warning: ["[warn]", "[warning]", " WARN ", " WARNING ", " WARNING:", " warning="],
+    info: ["[info]", "[information]", " INFO ", " INFO:"],
+    debug: ["[debug]", "[trace]", "[verbose]", " DEBUG ", " TRACE ", " VERBOSE "]
+  };
+  const fields = Array.from(new Set([...aliasFieldsForFilter("level"), "level", "severity_text", "severity", "Level"]));
+  const messageFields = ["_msg", "message", "msg", "log"];
+  const clauses = Array.from(
+    new Set([
+      ...fields.flatMap((field) => variants[severity].map((value) => `${field}:${quoteValue(value)}`)),
+      ...messageFields.flatMap((field) => messageVariants[severity].map((value) => `${field}:${quoteValue(value)}`))
+    ])
+  );
   return `${query.trim() || defaultLogQuery} (${clauses.join(" OR ")})`;
 }
 
@@ -1460,19 +1482,24 @@ function App() {
   async function refreshFacets(baseQuery = query, filters = appliedFilters, window = timeWindow) {
     const runId = ++facetRunIdRef.current;
     const isCurrentRun = () => runId === facetRunIdRef.current;
-    const fieldsToLoad = fieldMappings.facets.map(({ field }) => field);
-    if (fieldsToLoad.length === 0) return;
+    const facetFields = fieldMappings.facets.map(({ field }) => field);
+    if (facetFields.length === 0) return;
+    const fieldsToLoad = Array.from(new Set(facetFields.flatMap((field) => aliasFieldsForFilter(field))));
 
     try {
       const backendQuery = queryWithExpandedFilters(baseQuery, filters);
       const batch = normalizeFacetResponse(await getFacets(backendQuery, fieldsToLoad, 100, window));
       if (!isCurrentRun()) return;
       if (Object.keys(batch).length > 0) {
-        const nextValues = Object.fromEntries(fieldsToLoad.map((field) => [field, mergeFacetValues(field, batch[field])]));
+        const nextValues = Object.fromEntries(
+          facetFields.map((field) => [field, mergeFacetValues(field, ...aliasFieldsForFilter(field).map((alias) => batch[alias]))])
+        );
+        const hasValues = Object.values(nextValues).some((values) => values.length > 0);
+        if (!hasValues) throw new Error("Batched facet response did not include configured alias values.");
         setFacets((current) => ({ ...current, ...nextValues }));
         setFacetCache((current) => {
           const merged = { ...current };
-          fieldsToLoad.forEach((field) => {
+          facetFields.forEach((field) => {
             merged[field] = mergeFacetValues(field, current[field], nextValues[field]);
           });
           return merged;
@@ -1483,7 +1510,7 @@ function App() {
       // Fall back to per-field loading below. Older or mocked VictoriaLogs responses may not support batch facets.
     }
 
-    const entries = await Promise.all(fieldsToLoad.map(async (field) => [field, await loadFacetValues(field, baseQuery, filters, window)] as const));
+    const entries = await Promise.all(facetFields.map(async (field) => [field, await loadFacetValues(field, baseQuery, filters, window)] as const));
     if (!isCurrentRun()) return;
     const nextValues = Object.fromEntries(entries);
     setFacets((current) => ({ ...current, ...nextValues }));

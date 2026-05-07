@@ -11,6 +11,9 @@
     "MachineName",
     "level",
     "severity_text",
+    "severityText",
+    "level_name",
+    "levelName",
     "source",
     "status",
     "client",
@@ -39,7 +42,7 @@
     ],
     "host": ["host", "hostname", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
     "hostname": ["hostname", "host", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
-    "level": ["level", "Level", "severity", "severity_text"],
+    "level": ["level", "Level", "severity", "severity_text", "severityText", "level_name", "levelName"],
     "kubernetes.pod_namespace": ["kubernetes.pod_namespace", "namespace"],
     "kubernetes.pod_name": ["kubernetes.pod_name", "pod"]
   },

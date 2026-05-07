@@ -29,6 +29,9 @@ TEST_FIELD_MAPPINGS = {
         "MachineName",
         "level",
         "severity_text",
+        "severityText",
+        "level_name",
+        "levelName",
         "source",
         "status",
         "client",
@@ -57,7 +60,7 @@ TEST_FIELD_MAPPINGS = {
         ],
         "host": ["host", "hostname", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
         "hostname": ["hostname", "host", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
-        "level": ["level", "Level", "severity", "severity_text"],
+        "level": ["level", "Level", "severity", "severity_text", "severityText", "level_name", "levelName"],
         "kubernetes.pod_namespace": ["kubernetes.pod_namespace", "namespace"],
         "kubernetes.pod_name": ["kubernetes.pod_name", "pod"],
     },
@@ -240,6 +243,8 @@ def test_configured_facet_aliases_copy_host_and_service_names():
     query = with_copy_pipes("_time:15m", TEST_FIELD_MAPPINGS)
     assert "copy service_name as service" in query
     assert "copy host_name as host" in query
+    assert "copy severity_text as level" in query
+    assert "copy levelName as level" in query
 
 
 def test_tail_errors_are_streamed_as_sse_error_events():

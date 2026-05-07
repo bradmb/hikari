@@ -74,6 +74,9 @@ fieldMappings:
       - MachineName
       - level
       - severity_text
+      - severityText
+      - level_name
+      - levelName
       - source
       - status
       - client
@@ -122,6 +125,9 @@ fieldMappings:
         - Level
         - severity
         - severity_text
+        - severityText
+        - level_name
+        - levelName
       kubernetes.pod_namespace:
         - kubernetes.pod_namespace
         - namespace
