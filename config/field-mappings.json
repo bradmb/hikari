@@ -46,6 +46,34 @@
     "kubernetes.pod_namespace": ["kubernetes.pod_namespace", "namespace"],
     "kubernetes.pod_name": ["kubernetes.pod_name", "pod"]
   },
+  "derivedFields": {
+    "level": [
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "level" },
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "Level" },
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "severity" },
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "severity_text" },
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "severityText" },
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "level_name" },
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "levelName" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\"level\"\\s*:\\s*\"(?:fatal|critical|error|err)\"", "queryPattern": "\\x22level\\x22[[:space:]]*:[[:space:]]*\\x22(?:fatal|critical|error|err)\\x22", "flags": "i", "value": "error" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\"level\"\\s*:\\s*\"warn(?:ing)?\"", "queryPattern": "\\x22level\\x22[[:space:]]*:[[:space:]]*\\x22warn(ing)?\\x22", "flags": "i", "value": "warning" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\"level\"\\s*:\\s*\"info(?:rmation)?\"", "queryPattern": "\\x22level\\x22[[:space:]]*:[[:space:]]*\\x22info(rmation)?\\x22", "flags": "i", "value": "info" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\"level\"\\s*:\\s*\"(?:debug|trace|verbose)\"", "queryPattern": "\\x22level\\x22[[:space:]]*:[[:space:]]*\\x22(?:debug|trace|verbose)\\x22", "flags": "i", "value": "debug" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "^[EF]\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "queryPattern": "^[EF][0-9]{4}[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}", "value": "error" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "^W\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "queryPattern": "^W[0-9]{4}[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}", "value": "warning" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "^I\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "queryPattern": "^I[0-9]{4}[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}", "value": "info" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "(^|[\\s\\[])(fatal|critical|error|err)([\\]\\s:|,-]|$)|\\serror=", "queryPattern": "(^|[[:space:]]|[[])(fatal|critical|error|err)([]]|[[:space:]]|:|[|]|,|-|$)|[[:space:]]error=", "flags": "i", "value": "error" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "(^|[\\s\\[])(warning|warn)([\\]\\s:|,-]|$)|\\swarning=", "queryPattern": "(^|[[:space:]]|[[])(warning|warn)([]]|[[:space:]]|:|[|]|,|-|$)|[[:space:]]warning=", "flags": "i", "value": "warning" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "(^|[\\s\\[])(info|information)([\\]\\s:|,-]|$)", "queryPattern": "(^|[[:space:]]|[[])(info|information)([]]|[[:space:]]|:|[|]|,|-|$)", "flags": "i", "value": "info" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "(^|[\\s\\[])(debug|trace|verbose)([\\]\\s:|,-]|$)", "queryPattern": "(^|[[:space:]]|[[])(debug|trace|verbose)([]]|[[:space:]]|:|[|]|,|-|$)", "flags": "i", "value": "debug" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+5\\d\\d\\s+", "queryPattern": "^[^[:space:]]+[[:space:]]+[[][^]]+[]][[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[-0-9/]+[[:space:]]+5[0-9][0-9][[:space:]]+", "value": "error" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+4\\d\\d\\s+", "queryPattern": "^[^[:space:]]+[[:space:]]+[[][^]]+[]][[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[-0-9/]+[[:space:]]+4[0-9][0-9][[:space:]]+", "value": "warning" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+[123]\\d\\d\\s+", "queryPattern": "^[^[:space:]]+[[:space:]]+[[][^]]+[]][[:space:]]+[^[:space:]]+[[:space:]]+[^[:space:]]+[[:space:]]+[-0-9/]+[[:space:]]+[123][0-9][0-9][[:space:]]+", "value": "info" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\\bHTTP/\\d(?:\\.\\d)?\\s+5\\d\\d\\b", "queryPattern": "HTTP/[0-9]([.][0-9])?[[:space:]]+5[0-9][0-9]", "flags": "i", "value": "error" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\\bHTTP/\\d(?:\\.\\d)?\\s+4\\d\\d\\b", "queryPattern": "HTTP/[0-9]([.][0-9])?[[:space:]]+4[0-9][0-9]", "flags": "i", "value": "warning" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\\bHTTP/\\d(?:\\.\\d)?\\s+[123]\\d\\d\\b", "queryPattern": "HTTP/[0-9]([.][0-9])?[[:space:]]+[123][0-9][0-9]", "flags": "i", "value": "info" }
+    ]
+  },
   "facets": [
     { "field": "environment", "label": "Environment" },
     { "field": "service", "label": "Service", "summary": true },

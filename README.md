@@ -54,7 +54,7 @@ Common environment variables:
 - `HIKARI_VICTORIA_HEADERS`: optional JSON object of extra headers for VictoriaLogs.
 - `HIKARI_DEFAULT_QUERY`: default LogsQL query, usually `_time:15m`.
 - `HIKARI_DEFAULT_FIELDS`: comma-separated fields to surface in the UI.
-- `HIKARI_FIELD_MAPPINGS_FILE`: JSON file that defines canonical fields, aliases, and default facets.
+- `HIKARI_FIELD_MAPPINGS_FILE`: JSON file that defines canonical fields, aliases, derived fields, and default facets.
 - `HIKARI_FIELD_MAPPINGS`: optional inline JSON override for field mappings.
 - `HIKARI_FACET_PREVIEW_LIMIT`: number of facet values shown before a `View more` expander appears. Defaults to `10`.
 - `OPENAI_API_KEY`: optional, enables natural-language query generation.
@@ -73,6 +73,7 @@ Field and facet mappings live in `config/field-mappings.json`. Use this file to 
 
 - `defaultFields` controls the fields shown first in selectors and discovery.
 - `aliases` maps source fields into canonical fields such as `service`, `host`, and `level`.
+- `derivedFields` maps values embedded in message fields, such as JSON payload levels or access-log status codes, into canonical fields. Hikari turns regex derived-field rules into VictoriaLogs regex filters for level facets and histograms. Use `queryPattern` when VictoriaLogs needs different regex syntax than local row normalization.
 - `facets` controls the left sidebar facet groups and MCP summary facets.
 
 For example, `service.name` and `service_name` can both populate the canonical `service` facet, while `host.name` and `host_name` can populate `host`. Hikari applies those aliases to backend VictoriaLogs requests with hidden LogsQL `copy` pipes, so users still see clean queries like `_time:15m service:="api"`.

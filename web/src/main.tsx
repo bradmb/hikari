@@ -18,10 +18,10 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { generateQuery, getAppConfig, getFacets, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiConversationMessage, type AiIncidentContext, type AiStep, type FacetsResponse, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
+import { generateQuery, getAppConfig, getFacets, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiConversationMessage, type AiIncidentContext, type AiStep, type DerivedFieldRule, type FacetsResponse, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
 import "./styles.css";
 
-const emptyFieldMappings: FieldMappings = { defaultFields: [], aliases: {}, facets: [] };
+const emptyFieldMappings: FieldMappings = { defaultFields: [], aliases: {}, facets: [], derivedFields: {} };
 let activeFieldMappings = emptyFieldMappings;
 
 function setActiveFieldMappings(next: FieldMappings) {
@@ -463,11 +463,6 @@ function messageFromPayload(payload: Record<string, unknown> | null): string {
   return asText(payload.msg ?? payload.message ?? payload.Message ?? payload.State ?? payload.state ?? payload.event);
 }
 
-function levelFromPayload(payload: Record<string, unknown> | null): string {
-  if (!payload) return "";
-  return canonicalLevel(asText(payload.level ?? payload.Level ?? payload.severity ?? payload.severity_text ?? payload.severityText ?? payload.level_name ?? payload.levelName));
-}
-
 function message(row: LogRow): string {
   const candidates = [row.message, row.msg, row._msg, row.log];
   for (const candidate of candidates) {
@@ -480,46 +475,59 @@ function message(row: LogRow): string {
   return "";
 }
 
-function levelFromMessageText(text: string): string {
-  if (!text) return "";
-  const glogMatch = text.match(/^\s*([IWEF])\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+/);
-  if (glogMatch?.[1] === "I") return "info";
-  if (glogMatch?.[1] === "W") return "warning";
-  if (glogMatch?.[1] === "E") return "error";
-  if (glogMatch?.[1] === "F") return "fatal";
-  const accessMatch = text.match(/^\S+\s+\[[^\]]+\]\s+\S+\s+\S+\s+[-\d/]+\s+(\d{3})\s+/);
-  if (accessMatch?.[1]) {
-    const status = Number(accessMatch[1]);
-    if (status >= 500) return "error";
-    if (status >= 400) return "warning";
-    return "info";
+function ruleSources(rule: DerivedFieldRule): string[] {
+  const configured = Array.isArray(rule.sources) ? rule.sources : rule.source ? [rule.source] : [];
+  return configured.map((source) => source.trim()).filter(Boolean);
+}
+
+function jsonPathValue(value: unknown, path = ""): unknown {
+  let current = value;
+  if (typeof current === "string") {
+    const raw = current.trim();
+    if (!raw.startsWith("{")) return undefined;
+    try {
+      current = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
   }
-  const httpResponseMatch = text.match(/\bHTTP\/\d(?:\.\d)?\s+(\d{3})\b/);
-  if (httpResponseMatch?.[1]) {
-    const status = Number(httpResponseMatch[1]);
-    if (status >= 500) return "error";
-    if (status >= 400) return "warning";
-    return "info";
+  if (!path) return current;
+  for (const part of path.split(".")) {
+    if (!part || !current || typeof current !== "object" || Array.isArray(current)) return undefined;
+    current = (current as Record<string, unknown>)[part];
   }
-  const normalized = text.toLowerCase();
-  if (/(^|[\s[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=/.test(normalized)) return "error";
-  if (/(^|[\s[])(warning|warn)([\]\s:|,-]|$)|\swarning=/.test(normalized)) return "warning";
-  if (/(^|[\s[])(debug|trace|verbose)([\]\s:|,-]|$)/.test(normalized)) return "debug";
-  if (/(^|[\s[])(info|information)([\]\s:|,-]|$)/.test(normalized)) return "info";
+  return current;
+}
+
+function regexMatches(pattern: string, value: string, flags = ""): boolean {
+  try {
+    return new RegExp(pattern, flags.replace(/[^dgimsuvy]/g, "")).test(value);
+  } catch {
+    return false;
+  }
+}
+
+function derivedFieldValue(row: LogRow, field: string): string {
+  const rules = activeFieldMappings.derivedFields?.[field] ?? [];
+  for (const rule of rules) {
+    for (const source of ruleSources(rule)) {
+      const raw = row[source];
+      if (raw === undefined || raw === null || asText(raw) === "") continue;
+      if (rule.type === "json") {
+        const derived = jsonPathValue(raw, rule.path);
+        const value = asText(derived);
+        if (value) return field === "level" ? canonicalLevel(value) : value;
+      }
+      if (rule.type === "regex" && rule.pattern && rule.value && regexMatches(rule.pattern, asText(raw), rule.flags)) {
+        return field === "level" ? canonicalLevel(rule.value) : rule.value;
+      }
+    }
+  }
   return "";
 }
 
 function levelFromMessageFields(row: LogRow): string {
-  const candidates = [row._msg, row.message, row.msg, row.log];
-  for (const candidate of candidates) {
-    const raw = asText(candidate);
-    if (!raw) continue;
-    const nested = levelFromPayload(parseJsonPayload(raw));
-    if (nested) return nested;
-    const textLevel = levelFromMessageText(raw);
-    if (textLevel) return textLevel;
-  }
-  return "";
+  return derivedFieldValue(row, "level");
 }
 
 function timeValue(row: LogRow): string {
@@ -811,30 +819,24 @@ function levelSearchClauses(value: string): string[] {
     info: ["info", "Info", "INFO", "information", "Information"],
     debug: ["debug", "Debug", "DEBUG", "trace", "Trace", "verbose", "Verbose"]
   };
-  const messageVariants: Record<HistogramSeverity, string[]> = {
-    error: ["[error]", "[err]", "[fatal]", "[critical]", " ERR ", " ERROR ", " ERROR:", " error=", " fatal ", " critical ", "\"level\":\"error\"", "\"level\":\"fatal\"", "\"level\":\"critical\""],
-    warning: ["[warn]", "[warning]", " WARN ", " WARNING ", " WARNING:", " warning=", "\"level\":\"warn\"", "\"level\":\"warning\""],
-    info: ["[info]", "[information]", " INFO ", " INFO:", "\"level\":\"info\"", "\"level\":\"information\""],
-    debug: ["[debug]", "[trace]", "[verbose]", " DEBUG ", " TRACE ", " VERBOSE "]
-  };
-  const messageRegexes: Record<HistogramSeverity, string[]> = {
-    error: ["^[EF]\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+5\\d\\d\\s+", "\\bHTTP/\\d(?:\\.\\d)?\\s+5\\d\\d\\b"],
-    warning: ["^W\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+4\\d\\d\\s+", "\\bHTTP/\\d(?:\\.\\d)?\\s+4\\d\\d\\b"],
-    info: ["^I\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+[123]\\d\\d\\s+", "\\bHTTP/\\d(?:\\.\\d)?\\s+[123]\\d\\d\\b"],
-    debug: []
-  };
   if (severity === "other") return [filterToken("level", value)];
   const fields = Array.from(new Set([...aliasFieldsForFilter("level"), "level", "severity_text", "severity", "Level"]));
-  const messageFields = ["_msg", "message", "msg", "log"];
-  const wordClauses = messageVariants[severity].map((variant) => quoteValue(variant));
   return Array.from(
     new Set([
       ...fields.flatMap((field) => variants[severity].map((value) => `${field}:${quoteValue(value)}`)),
-      ...messageFields.flatMap((field) => messageVariants[severity].map((value) => `${field}:${quoteValue(value)}`)),
-      ...wordClauses,
-      ...messageFields.flatMap((field) => messageRegexes[severity].map((regex) => `${field}:~${quoteValue(regex)}`))
+      ...derivedRegexClauses("level", severity)
     ])
   );
+}
+
+function derivedRegexClauses(field: string, severity: HistogramSeverity): string[] {
+  const rules = activeFieldMappings.derivedFields?.[field] ?? [];
+  return rules.flatMap((rule) => {
+    if (rule.type !== "regex" || !rule.pattern || !rule.value || severityKey(rule.value) !== severity) return [];
+    const configuredPattern = rule.queryPattern || rule.pattern;
+    const pattern = rule.flags?.includes("i") && !configuredPattern.startsWith("(?i)") ? `(?i)${configuredPattern}` : configuredPattern;
+    return ruleSources(rule).map((source) => `${source}:~${quoteValue(pattern)}`);
+  });
 }
 
 function canonicalLevel(value: string): string {

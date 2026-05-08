@@ -108,7 +108,7 @@ docker compose up mock-victorialogs api web</code></pre>
               <div role="row"><code>HIKARI_VICTORIA_URL</code><span>VictoriaLogs base URL.</span></div>
               <div role="row"><code>HIKARI_VICTORIA_BEARER_TOKEN</code><span>Optional bearer token for VictoriaLogs.</span></div>
               <div role="row"><code>HIKARI_VICTORIA_HEADERS</code><span>Optional JSON object of extra headers for VictoriaLogs.</span></div>
-              <div role="row"><code>HIKARI_FIELD_MAPPINGS_FILE</code><span>JSON file that defines canonical fields, facet aliases, and sidebar facets.</span></div>
+              <div role="row"><code>HIKARI_FIELD_MAPPINGS_FILE</code><span>JSON file that defines canonical fields, facet aliases, derived fields, and sidebar facets.</span></div>
               <div role="row"><code>HIKARI_FIELD_MAPPINGS</code><span>Optional inline JSON override for field mappings.</span></div>
               <div role="row"><code>HIKARI_FACET_PREVIEW_LIMIT</code><span>Number of values shown per facet before the <code>View more</code> expander appears. Defaults to <code>10</code>.</span></div>
               <div role="row"><code>OPENAI_API_KEY</code><span>Optional key for natural-language query generation.</span></div>
@@ -144,6 +144,31 @@ docker compose up mock-victorialogs api web</code></pre>
               while Hikari sends generated copies such as <code>copy service_name as service</code> and
               <code>copy host_name as host</code> before loading rows, facets, field values, hit buckets,
               live tail data, AI context, and MCP results.
+            </p>
+            <p>
+              Use <code>derivedFields</code> when a canonical value is embedded inside another field. Hikari
+              uses these rules for row display, level facets, and histogram level breakdowns. Regex rules
+              are emitted as VictoriaLogs regex filters, so the database still performs the matching work.
+            </p>
+            <pre class="code-sample"><code>{
+  "derivedFields": {
+    "level": [
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "level" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\"level\"\\s*:\\s*\"error\"", "flags": "i", "value": "error" },
+      {
+        "type": "regex",
+        "sources": ["_msg", "message", "msg", "log"],
+        "pattern": "^W\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}",
+        "queryPattern": "^W[0-9]{4}[[:space:]]+[0-9]{2}:[0-9]{2}:[0-9]{2}",
+        "value": "warning"
+      }
+    ]
+  }
+}</code></pre>
+            <p>
+              The optional <code>flags</code> value supports <code>i</code> for case-insensitive regex matching.
+              If VictoriaLogs needs different regex syntax, set <code>queryPattern</code>; Hikari uses that
+              only for generated LogsQL and keeps <code>pattern</code> for local row normalization.
             </p>
             <p>Use <code>facets</code> to choose the canonical groups shown in the sidebar and MCP summaries.</p>
             <pre class="code-sample"><code>{
@@ -194,6 +219,21 @@ docker compose up mock-victorialogs api web</code></pre>
       level:
         - level
         - severity_text
+    derivedFields:
+      level:
+        - type: json
+          sources: [_msg, message, msg, log]
+          path: level
+        - type: regex
+          sources: [_msg, message, msg, log]
+          pattern: '"level"\s*:\s*"error"'
+          queryPattern: '\x22level\x22[[:space:]]*:[[:space:]]*\x22error\x22'
+          flags: i
+          value: error
+        - type: regex
+          sources: [_msg, message, msg, log]
+          pattern: '^W\d{4}\s+\d{2}:\d{2}:\d{2}'
+          value: warning
     facets:
       - field: environment
         label: Environment

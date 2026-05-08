@@ -48,11 +48,23 @@ export type FieldMappingFacet = {
   summary?: boolean;
 };
 
+export type DerivedFieldRule = {
+  type: "json" | "regex" | string;
+  source?: string;
+  sources?: string[];
+  path?: string;
+  pattern?: string;
+  queryPattern?: string;
+  flags?: string;
+  value?: string;
+};
+
 /** Canonical fields, source aliases, and sidebar facets used by the UI. */
 export type FieldMappings = {
   defaultFields: string[];
   aliases: Record<string, string[]>;
   facets: FieldMappingFacet[];
+  derivedFields?: Record<string, DerivedFieldRule[]>;
 };
 
 /** Conversation context sent with AI follow-up requests. */

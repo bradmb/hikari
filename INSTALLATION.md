@@ -139,6 +139,34 @@ _time:15m | copy service.name as service | copy service_name as service | copy h
 Do not add these copy pipes manually to user-facing saved queries. Configure the
 facet aliases once and let Hikari add them consistently.
 
+Use `derivedFields` for canonical values that are embedded inside another field instead of stored as a
+top-level field. Hikari uses these rules for row display, level facets, and histogram level breakdowns.
+Regex rules are translated into LogsQL regex clauses so VictoriaLogs still performs the matching work.
+
+```json
+{
+  "derivedFields": {
+    "level": [
+      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "level" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\"level\"\\s*:\\s*\"error\"", "queryPattern": "\\x22level\\x22[[:space:]]*:[[:space:]]*\\x22error\\x22", "flags": "i", "value": "error" },
+      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "^W\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "value": "warning" },
+      {
+        "type": "regex",
+        "sources": ["_msg", "message", "msg", "log"],
+        "pattern": "\\bHTTP/\\d(?:\\.\\d)?\\s+5\\d\\d\\b",
+        "queryPattern": "HTTP/[0-9]([.][0-9])?[[:space:]]+5[0-9][0-9]",
+        "flags": "i",
+        "value": "error"
+      }
+    ]
+  }
+}
+```
+
+The optional `flags` value currently supports `i` for case-insensitive regex handling. If a regex needs
+different syntax for VictoriaLogs than for local row normalization, set `queryPattern`; Hikari uses
+`queryPattern` for LogsQL and `pattern` for Python/JavaScript row normalization.
+
 Use `facets` to choose the canonical fields shown in the left sidebar and MCP summary output:
 
 ```json
@@ -190,6 +218,21 @@ fieldMappings:
       level:
         - level
         - severity_text
+    derivedFields:
+      level:
+        - type: json
+          sources: [_msg, message, msg, log]
+          path: level
+        - type: regex
+          sources: [_msg, message, msg, log]
+          pattern: '"level"\s*:\s*"error"'
+          queryPattern: '\x22level\x22[[:space:]]*:[[:space:]]*\x22error\x22'
+          flags: i
+          value: error
+        - type: regex
+          sources: [_msg, message, msg, log]
+          pattern: '^W\d{4}\s+\d{2}:\d{2}:\d{2}'
+          value: warning
     facets:
       - field: environment
         label: Environment

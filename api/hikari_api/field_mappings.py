@@ -23,6 +23,7 @@ FALLBACK_FIELD_MAPPINGS: dict[str, Any] = {
         {"field": "level", "label": "Level", "summary": True},
         {"field": "source", "label": "Source"},
     ],
+    "derivedFields": {},
 }
 
 
@@ -90,14 +91,43 @@ def _normalize(config: dict[str, Any]) -> dict[str, Any]:
             )
         if facets:
             normalized["facets"] = facets
+    if isinstance(config.get("derivedFields"), dict):
+        derived_fields: dict[str, list[dict[str, Any]]] = {}
+        for field, rules in config["derivedFields"].items():
+            if not isinstance(rules, list):
+                continue
+            clean_rules = []
+            for rule in rules:
+                if not isinstance(rule, dict):
+                    continue
+                rule_type = str(rule.get("type", "")).strip()
+                sources = _string_list(rule.get("sources")) or _string_list([rule.get("source")])
+                if not rule_type or not sources:
+                    continue
+                clean_rule: dict[str, Any] = {"type": rule_type, "sources": sources}
+                if rule.get("path"):
+                    clean_rule["path"] = str(rule["path"]).strip()
+                if rule.get("pattern"):
+                    clean_rule["pattern"] = str(rule["pattern"])
+                if rule.get("queryPattern"):
+                    clean_rule["queryPattern"] = str(rule["queryPattern"])
+                if rule.get("flags"):
+                    clean_rule["flags"] = str(rule["flags"]).strip()
+                if rule.get("value") is not None:
+                    clean_rule["value"] = str(rule["value"]).strip()
+                if clean_rule.get("path") or (clean_rule.get("pattern") and clean_rule.get("value")):
+                    clean_rules.append(clean_rule)
+            if clean_rules:
+                derived_fields[str(field).strip()] = clean_rules
+        normalized["derivedFields"] = derived_fields
     return normalized
 
 
 def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
     for key, value in override.items():
-        if key == "aliases" and isinstance(value, dict) and isinstance(merged.get("aliases"), dict):
-            merged["aliases"] = {**merged["aliases"], **value}
+        if key in {"aliases", "derivedFields"} and isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = {**merged[key], **value}
         else:
             merged[key] = value
     return merged
@@ -171,7 +201,7 @@ def _canonical_level(value: Any) -> str | None:
     return normalized or None
 
 
-def _level_from_payload(value: Any) -> str | None:
+def _json_path_value(value: Any, path: str) -> Any:
     if isinstance(value, str):
         raw = value.strip()
         if not raw.startswith("{"):
@@ -180,53 +210,40 @@ def _level_from_payload(value: Any) -> str | None:
             value = json.loads(raw)
         except json.JSONDecodeError:
             return None
-    if not isinstance(value, dict):
+    current = value
+    for part in path.split("."):
+        if not isinstance(current, dict):
+            return None
+        current = current.get(part)
+    return current
+
+
+def _derive_field(row: dict[str, Any], config: dict[str, Any], field: str) -> str | None:
+    rules = config.get("derivedFields", {}).get(field, [])
+    if not isinstance(rules, list):
         return None
-    for field in ("level", "Level", "severity", "severity_text", "severityText", "level_name", "levelName"):
-        candidate = _row_value(value, field)
-        if candidate is not None:
-            return _canonical_level(candidate)
-    return None
-
-
-def _level_from_message(row: dict[str, Any]) -> str | None:
-    for field in ("_msg", "message", "msg", "log"):
-        value = _row_value(row, field)
-        if value is None:
+    for rule in rules:
+        if not isinstance(rule, dict):
             continue
-        payload_level = _level_from_payload(value)
-        if payload_level:
-            return payload_level
-        raw_text = str(value)
-        glog_match = re.match(r"^\s*([IWEF])\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+", raw_text)
-        if glog_match:
-            return {"I": "info", "W": "warning", "E": "error", "F": "fatal"}[glog_match.group(1)]
-        access_match = re.match(r"^\S+\s+\[[^\]]+\]\s+\S+\s+\S+\s+[-\d/]+\s+(\d{3})\s+", raw_text)
-        if access_match:
-            status = int(access_match.group(1))
-            if status >= 500:
-                return "error"
-            if status >= 400:
-                return "warning"
-            return "info"
-        http_response_match = re.search(r"\bHTTP/\d(?:\.\d)?\s+(\d{3})\b", raw_text)
-        if http_response_match:
-            status = int(http_response_match.group(1))
-            if status >= 500:
-                return "error"
-            if status >= 400:
-                return "warning"
-            return "info"
-        text = raw_text.lower()
-        if re.search(r"(^|[\s\[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=", text):
-            return "error"
-        if re.search(r"(^|[\s\[])(warning|warn)([\]\s:|,-]|$)|\swarning=", text):
-            return "warning"
-        if re.search(r"(^|[\s\[])(debug|trace|verbose)([\]\s:|,-]|$)", text):
-            return "debug"
-        if re.search(r"(^|[\s\[])(info|information)([\]\s:|,-]|$)", text):
-            return "info"
+        rule_type = rule.get("type")
+        sources = _string_list(rule.get("sources"))
+        for source in sources:
+            value = _row_value(row, source)
+            if value is None:
+                continue
+            if rule_type == "json":
+                derived = _json_path_value(value, str(rule.get("path", "")))
+                if derived is not None:
+                    return _canonical_level(derived) if field == "level" else str(derived)
+            if rule_type == "regex" and rule.get("pattern") and rule.get("value"):
+                flags = re.IGNORECASE if "i" in str(rule.get("flags", "")) else 0
+                if re.search(str(rule["pattern"]), str(value), flags=flags):
+                    return _canonical_level(rule["value"]) if field == "level" else str(rule["value"])
     return None
+
+
+def _level_from_message(row: dict[str, Any], config: dict[str, Any]) -> str | None:
+    return _derive_field(row, config, "level")
 
 
 def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
@@ -246,7 +263,7 @@ def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[s
                 normalized[target_field] = value
                 break
     if _row_value(normalized, "level") is None:
-        inferred_level = _level_from_message(normalized)
+        inferred_level = _level_from_message(normalized, config)
         if inferred_level:
             normalized["level"] = inferred_level
     return normalized

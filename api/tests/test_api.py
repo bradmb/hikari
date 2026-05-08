@@ -73,6 +73,17 @@ TEST_FIELD_MAPPINGS = {
         {"field": "kubernetes.pod_namespace", "key": "namespace", "label": "Namespace", "summary": True},
         {"field": "kubernetes.pod_name", "key": "pod", "label": "Pod", "summary": True},
     ],
+    "derivedFields": {
+        "level": [
+            {"type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "level"},
+            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"(^|[\s\[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=", "flags": "i", "value": "error"},
+            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"^W\d{4}\s+\d{2}:\d{2}:\d{2}", "value": "warning"},
+            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"^\S+\s+\[[^\]]+\]\s+\S+\s+\S+\s+[-\d/]+\s+[123]\d\d\s+", "value": "info"},
+            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"^\S+\s+\[[^\]]+\]\s+\S+\s+\S+\s+[-\d/]+\s+5\d\d\s+", "value": "error"},
+            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"\bHTTP/\d(?:\.\d)?\s+[123]\d\d\b", "value": "info"},
+            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"\bHTTP/\d(?:\.\d)?\s+5\d\d\b", "value": "error"},
+        ]
+    },
 }
 
 
