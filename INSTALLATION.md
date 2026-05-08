@@ -139,33 +139,10 @@ _time:15m | copy service.name as service | copy service_name as service | copy h
 Do not add these copy pipes manually to user-facing saved queries. Configure the
 facet aliases once and let Hikari add them consistently.
 
-Use `derivedFields` for canonical values that are embedded inside another field instead of stored as a
-top-level field. Hikari uses these rules for row display, level facets, and histogram level breakdowns.
-Regex rules are translated into LogsQL regex clauses so VictoriaLogs still performs the matching work.
-
-```json
-{
-  "derivedFields": {
-    "level": [
-      { "type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "level" },
-      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "\"level\"\\s*:\\s*\"error\"", "queryPattern": "\\x22level\\x22[[:space:]]*:[[:space:]]*\\x22error\\x22", "flags": "i", "value": "error" },
-      { "type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": "^W\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "value": "warning" },
-      {
-        "type": "regex",
-        "sources": ["_msg", "message", "msg", "log"],
-        "pattern": "\\bHTTP/\\d(?:\\.\\d)?\\s+5\\d\\d\\b",
-        "queryPattern": "HTTP/[0-9]([.][0-9])?[[:space:]]+5[0-9][0-9]",
-        "flags": "i",
-        "value": "error"
-      }
-    ]
-  }
-}
-```
-
-The optional `flags` value currently supports `i` for case-insensitive regex handling. If a regex needs
-different syntax for VictoriaLogs than for local row normalization, set `queryPattern`; Hikari uses
-`queryPattern` for LogsQL and `pattern` for Python/JavaScript row normalization.
+Hikari expects canonical facet values to exist as stored VictoriaLogs fields. It does not derive
+`level`, `service`, or `host` from `_msg`, JSON payload text, or access-log strings at read time. Normalize
+those fields in your collector or application before shipping logs to VictoriaLogs. This keeps queries,
+facets, histograms, MCP tools, and AI context fast because VictoriaLogs can do the work directly.
 
 Use `facets` to choose the canonical fields shown in the left sidebar and MCP summary output:
 
@@ -217,22 +194,6 @@ fieldMappings:
         - kubernetes.pod_node_name
       level:
         - level
-        - severity_text
-    derivedFields:
-      level:
-        - type: json
-          sources: [_msg, message, msg, log]
-          path: level
-        - type: regex
-          sources: [_msg, message, msg, log]
-          pattern: '"level"\s*:\s*"error"'
-          queryPattern: '\x22level\x22[[:space:]]*:[[:space:]]*\x22error\x22'
-          flags: i
-          value: error
-        - type: regex
-          sources: [_msg, message, msg, log]
-          pattern: '^W\d{4}\s+\d{2}:\d{2}:\d{2}'
-          value: warning
     facets:
       - field: environment
         label: Environment
@@ -269,6 +230,39 @@ helm upgrade --install hikari ./k8s/helm/hikari `
 ```
 
 For non-Helm deployments, set `HIKARI_FIELD_MAPPINGS_FILE` to a mounted JSON file. `HIKARI_FIELD_MAPPINGS` can provide inline JSON overrides when a file mount is inconvenient.
+
+## Troubleshooting: Why am I not seeing levels?
+
+Hikari reads `level` as a real VictoriaLogs field. If every row shows `unknown` or `info`, check the data
+that is actually stored in VictoriaLogs before changing the UI.
+
+1. Query a recent row and inspect the top-level fields:
+
+```text
+_time:15m | limit 1
+```
+
+2. List observed level values:
+
+```text
+_time:15m level:*
+```
+
+3. If your logs only contain levels inside `_msg` or another message field, update your collector or app
+logger to emit a top-level `level` field before ingestion.
+
+4. For Kubernetes collector deployments, inspect the collector ConfigMap and rollout after changing the
+normalization script:
+
+```powershell
+kubectl -n victorialogs get configmap victorialogs-collector-fluent-bit -o yaml
+kubectl -n victorialogs get configmap fluentbit-lua-scripts -o yaml
+kubectl -n victorialogs rollout restart daemonset/victorialogs-collector-fluent-bit
+kubectl -n victorialogs rollout status daemonset/victorialogs-collector-fluent-bit
+```
+
+5. For application logs that bypass the collector and write directly to VictoriaLogs, configure the
+application logger to include `level` as a top-level attribute.
 
 ## Optional AI Search
 

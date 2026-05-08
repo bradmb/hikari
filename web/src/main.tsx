@@ -18,10 +18,10 @@ import {
   Sparkles,
   X
 } from "lucide-react";
-import { generateQuery, getAppConfig, getFacets, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiConversationMessage, type AiIncidentContext, type AiStep, type DerivedFieldRule, type FacetsResponse, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
+import { generateQuery, getAppConfig, getFacets, getFieldValues, getFields, getHits, searchLogs, tailUrl, type AiConversationMessage, type AiIncidentContext, type AiStep, type FacetsResponse, type FieldMappings, type HitBucket, type HitsResponse, type LogRow, type QueryWindow, type ValueHit } from "./api";
 import "./styles.css";
 
-const emptyFieldMappings: FieldMappings = { defaultFields: [], aliases: {}, facets: [], derivedFields: {} };
+const emptyFieldMappings: FieldMappings = { defaultFields: [], aliases: {}, facets: [] };
 let activeFieldMappings = emptyFieldMappings;
 
 function setActiveFieldMappings(next: FieldMappings) {
@@ -475,61 +475,6 @@ function message(row: LogRow): string {
   return "";
 }
 
-function ruleSources(rule: DerivedFieldRule): string[] {
-  const configured = Array.isArray(rule.sources) ? rule.sources : rule.source ? [rule.source] : [];
-  return configured.map((source) => source.trim()).filter(Boolean);
-}
-
-function jsonPathValue(value: unknown, path = ""): unknown {
-  let current = value;
-  if (typeof current === "string") {
-    const raw = current.trim();
-    if (!raw.startsWith("{")) return undefined;
-    try {
-      current = JSON.parse(raw);
-    } catch {
-      return undefined;
-    }
-  }
-  if (!path) return current;
-  for (const part of path.split(".")) {
-    if (!part || !current || typeof current !== "object" || Array.isArray(current)) return undefined;
-    current = (current as Record<string, unknown>)[part];
-  }
-  return current;
-}
-
-function regexMatches(pattern: string, value: string, flags = ""): boolean {
-  try {
-    return new RegExp(pattern, flags.replace(/[^dgimsuvy]/g, "")).test(value);
-  } catch {
-    return false;
-  }
-}
-
-function derivedFieldValue(row: LogRow, field: string): string {
-  const rules = activeFieldMappings.derivedFields?.[field] ?? [];
-  for (const rule of rules) {
-    for (const source of ruleSources(rule)) {
-      const raw = row[source];
-      if (raw === undefined || raw === null || asText(raw) === "") continue;
-      if (rule.type === "json") {
-        const derived = jsonPathValue(raw, rule.path);
-        const value = asText(derived);
-        if (value) return field === "level" ? canonicalLevel(value) : value;
-      }
-      if (rule.type === "regex" && rule.pattern && rule.value && regexMatches(rule.pattern, asText(raw), rule.flags)) {
-        return field === "level" ? canonicalLevel(rule.value) : rule.value;
-      }
-    }
-  }
-  return "";
-}
-
-function levelFromMessageFields(row: LogRow): string {
-  return derivedFieldValue(row, "level");
-}
-
 function timeValue(row: LogRow): string {
   return asText(row._time ?? row.timestamp ?? row.time);
 }
@@ -663,16 +608,6 @@ function normalizeHitBuckets(result: HitsResponse): HitBucket[] {
   });
 }
 
-function levelFacetValuesFromHits(series: HistogramSeveritySeries): ValueHit[] {
-  return (Object.entries(series) as Array<[HistogramSeverity, HitBucket[]]>)
-    .map(([severity, buckets]) => ({
-      value: displayFacetValue("level", severity),
-      hits: buckets.reduce((total, bucket) => total + countFromHit(bucket), 0)
-    }))
-    .filter((item) => item.hits > 0)
-    .sort((left, right) => right.hits - left.hits);
-}
-
 /** Extract a value from Promise.allSettled without making optional telemetry requests fatal. */
 function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
   return result.status === "fulfilled" ? result.value : fallback;
@@ -786,7 +721,7 @@ function levelLabel(level: string): string {
 }
 
 function levelValue(row: LogRow): string {
-  return firstFieldValue(row, aliasFieldsForFilter("level")) || levelFromMessageFields(row) || "unknown";
+  return firstFieldValue(row, aliasFieldsForFilter("level")) || "unknown";
 }
 
 function fieldValue(row: LogRow, field: string): string {
@@ -830,23 +765,12 @@ function levelSearchClauses(value: string): string[] {
     debug: ["debug", "Debug", "DEBUG", "trace", "Trace", "verbose", "Verbose"]
   };
   if (severity === "other") return [filterToken("level", value)];
-  const fields = Array.from(new Set([...aliasFieldsForFilter("level"), "level", "severity_text", "severity", "Level"]));
+  const fields = Array.from(new Set([...aliasFieldsForFilter("level"), "level"]));
   return Array.from(
     new Set([
-      ...fields.flatMap((field) => variants[severity].map((value) => `${field}:${quoteValue(value)}`)),
-      ...derivedRegexClauses("level", severity)
+      ...fields.flatMap((field) => variants[severity].map((value) => `${field}:${quoteValue(value)}`))
     ])
   );
-}
-
-function derivedRegexClauses(field: string, severity: HistogramSeverity): string[] {
-  const rules = activeFieldMappings.derivedFields?.[field] ?? [];
-  return rules.flatMap((rule) => {
-    if (rule.type !== "regex" || !rule.pattern || !rule.value || severityKey(rule.value) !== severity) return [];
-    const configuredPattern = rule.queryPattern || rule.pattern;
-    const pattern = rule.flags?.includes("i") && !configuredPattern.startsWith("(?i)") ? `(?i)${configuredPattern}` : configuredPattern;
-    return ruleSources(rule).map((source) => `${source}:~${quoteValue(pattern)}`);
-  });
 }
 
 function canonicalLevel(value: string): string {
@@ -1513,7 +1437,7 @@ function App() {
         .filter(Boolean)
         .slice(0, 24);
       setFields(Array.from(new Set([...fieldMappings.defaultFields, ...nextFields])));
-      void refreshFacets(activeQuery, activeFilters, activeWindow, { level: levelFacetValuesFromHits(nextHistogramLevelHits) });
+      void refreshFacets(activeQuery, activeFilters, activeWindow);
       return { query: activeQuery, relaxations };
     } catch (err) {
       if (!isCurrentRun()) return { query: nextQuery, relaxations: [] };
@@ -1525,34 +1449,10 @@ function App() {
   }
 
   async function loadFacetValues(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow): Promise<ValueHit[]> {
-    const derivedValues = await loadDerivedFacetValues(field, baseQuery, filters, window);
-    if (derivedValues.length > 0) return derivedValues;
     const fieldsToLoad = aliasFieldsForFilter(field);
     const backendQuery = queryWithExpandedFilters(baseQuery, filters);
     const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, window)));
     return mergeFacetValues(field, ...results.map((result) => result.values));
-  }
-
-  async function loadDerivedFacetValues(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow): Promise<ValueHit[]> {
-    if (field !== "level") return [];
-    const configured = activeFieldMappings.derivedFields?.level ?? [];
-    if (!configured.some((rule) => rule.type === "regex" && rule.value)) return [];
-    const severities = Array.from(
-      new Set(
-        configured
-          .map((rule) => severityKey(rule.value ?? ""))
-          .filter((severity): severity is HistogramSeverity => severity !== "other")
-      )
-    );
-    const step = durationToken(histogramStepMs(baseQuery, window));
-    const values = await Promise.all(
-      severities.map(async (severity) => {
-        const response = await getHits(queryWithExpandedFilters(queryWithLevelBucket(baseQuery, severity), filters), step, window);
-        const hits = normalizeHitBuckets(response).reduce((total, bucket) => total + countFromHit(bucket), 0);
-        return { value: displayFacetValue(field, severity), hits };
-      })
-    );
-    return values.filter((item) => item.hits > 0).sort((left, right) => right.hits - left.hits);
   }
 
   async function loadFacet(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow) {
@@ -1572,12 +1472,7 @@ function App() {
   }
 
   /** Refresh sidebar facets, preferring one batched backend call over many per-field requests. */
-  async function refreshFacets(
-    baseQuery = query,
-    filters = appliedFilters,
-    window = timeWindow,
-    precomputedDerivedFacets: Record<string, ValueHit[]> = {}
-  ) {
+  async function refreshFacets(baseQuery = query, filters = appliedFilters, window = timeWindow) {
     const runId = ++facetRunIdRef.current;
     const isCurrentRun = () => runId === facetRunIdRef.current;
     const facetFields = fieldMappings.facets.map(({ field }) => field);
@@ -1592,17 +1487,6 @@ function App() {
         const nextValues = Object.fromEntries(
           facetFields.map((field) => [field, mergeFacetValues(field, ...aliasFieldsForFilter(field).map((alias) => batch[alias]))])
         );
-        const derivedEntries = await Promise.all(
-          facetFields.map(async (field) => [
-            field,
-            Object.prototype.hasOwnProperty.call(precomputedDerivedFacets, field)
-              ? precomputedDerivedFacets[field]
-              : await loadDerivedFacetValues(field, baseQuery, filters, window)
-          ] as const)
-        );
-        derivedEntries.forEach(([field, values]) => {
-          if (values.length > 0) nextValues[field] = values;
-        });
         const hasValues = Object.values(nextValues).some((values) => values.length > 0);
         if (!hasValues) throw new Error("Batched facet response did not include configured alias values.");
         setFacets((current) => ({ ...current, ...nextValues }));
@@ -1622,9 +1506,7 @@ function App() {
     const entries = await Promise.all(
       facetFields.map(async (field) => [
         field,
-        Object.prototype.hasOwnProperty.call(precomputedDerivedFacets, field)
-          ? precomputedDerivedFacets[field]
-          : await loadFacetValues(field, baseQuery, filters, window)
+        await loadFacetValues(field, baseQuery, filters, window)
       ] as const)
     );
     if (!isCurrentRun()) return;
