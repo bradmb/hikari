@@ -28,10 +28,6 @@ TEST_FIELD_MAPPINGS = {
         "host_name",
         "MachineName",
         "level",
-        "severity_text",
-        "severityText",
-        "level_name",
-        "levelName",
         "source",
         "status",
         "client",
@@ -60,7 +56,7 @@ TEST_FIELD_MAPPINGS = {
         ],
         "host": ["host", "hostname", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
         "hostname": ["hostname", "host", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
-        "level": ["level", "Level", "severity", "severity_text", "severityText", "level_name", "levelName"],
+        "level": ["level"],
         "kubernetes.pod_namespace": ["kubernetes.pod_namespace", "namespace"],
         "kubernetes.pod_name": ["kubernetes.pod_name", "pod"],
     },
@@ -73,17 +69,6 @@ TEST_FIELD_MAPPINGS = {
         {"field": "kubernetes.pod_namespace", "key": "namespace", "label": "Namespace", "summary": True},
         {"field": "kubernetes.pod_name", "key": "pod", "label": "Pod", "summary": True},
     ],
-    "derivedFields": {
-        "level": [
-            {"type": "json", "sources": ["_msg", "message", "msg", "log"], "path": "level"},
-            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"(^|[\s\[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=", "flags": "i", "value": "error"},
-            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"^W\d{4}\s+\d{2}:\d{2}:\d{2}", "value": "warning"},
-            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"^\S+\s+\[[^\]]+\]\s+\S+\s+\S+\s+[-\d/]+\s+[123]\d\d\s+", "value": "info"},
-            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"^\S+\s+\[[^\]]+\]\s+\S+\s+\S+\s+[-\d/]+\s+5\d\d\s+", "value": "error"},
-            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"\bHTTP/\d(?:\.\d)?\s+[123]\d\d\b", "value": "info"},
-            {"type": "regex", "sources": ["_msg", "message", "msg", "log"], "pattern": r"\bHTTP/\d(?:\.\d)?\s+5\d\d\b", "value": "error"},
-        ]
-    },
 }
 
 
@@ -213,7 +198,7 @@ def test_search_normalizes_configured_aliases_in_rows():
     assert row["host_name"] == "workstation-01"
 
 
-def test_search_derives_level_from_message_when_structured_level_is_missing():
+def test_search_does_not_derive_level_from_message_when_structured_level_is_missing():
     class MessageOnlyLevelClient(FakeVictoriaLogsClient):
         async def query(self, path: str, data: dict):
             self.calls.append((path, data))
@@ -239,136 +224,7 @@ def test_search_derives_level_from_message_when_structured_level_is_missing():
         response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
 
     row = response.json()["rows"][0]
-    assert row["level"] == "error"
-
-
-def test_search_derives_level_from_json_message_payload():
-    class JsonMessageLevelClient(FakeVictoriaLogsClient):
-        async def query(self, path: str, data: dict):
-            self.calls.append((path, data))
-            return {
-                "rows": [
-                    {
-                        "_time": "2026-05-08T00:25:26Z",
-                        "_msg": '{"level":"error","ts":"2026-05-08T00:25:26Z","msg":"failed to process environ"}',
-                        "message": "failed to process environ",
-                        "service": "node-monitor",
-                    }
-                ]
-            }
-
-    fake = JsonMessageLevelClient()
-
-    def override_fake_client():
-        return fake
-
-    from hikari_api.main import client
-
-    app.dependency_overrides[client] = override_fake_client
-    with TestClient(app) as test_client:
-        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
-
-    row = response.json()["rows"][0]
-    assert row["level"] == "error"
-
-
-def test_search_derives_level_from_kubernetes_glog_prefix():
-    class GlogLevelClient(FakeVictoriaLogsClient):
-        async def query(self, path: str, data: dict):
-            self.calls.append((path, data))
-            return {
-                "rows": [
-                    {
-                        "_time": "2026-05-08T00:45:33Z",
-                        "_msg": "W0508 00:45:33.309809       1 reflector.go:569] failed to list snapshots",
-                        "service": "storage-controller",
-                    }
-                ]
-            }
-
-    fake = GlogLevelClient()
-
-    def override_fake_client():
-        return fake
-
-    from hikari_api.main import client
-
-    app.dependency_overrides[client] = override_fake_client
-    with TestClient(app) as test_client:
-        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
-
-    row = response.json()["rows"][0]
-    assert row["level"] == "warning"
-
-
-def test_search_derives_level_from_haproxy_access_status():
-    class AccessLogLevelClient(FakeVictoriaLogsClient):
-        async def query(self, path: str, data: dict):
-            self.calls.append((path, data))
-            return {
-                "rows": [
-                    {
-                        "_time": "2026-05-08T01:06:55Z",
-                        "_msg": '100.80.33.37:49286 [08/May/2026:01:06:55.556] http service_backend/SRV_4 0/0/0/4/4 200 2272 - - --VN 15/15/2/1/0 0/0 "GET app.example.com/resource HTTP/1.1"',
-                        "service": "ingress",
-                    },
-                    {
-                        "_time": "2026-05-08T01:07:55Z",
-                        "_msg": '100.80.33.37:49286 [08/May/2026:01:07:55.556] http service_backend/SRV_4 0/0/0/4/4 503 2272 - - --VN 15/15/2/1/0 0/0 "GET app.example.com/resource HTTP/1.1"',
-                        "service": "ingress",
-                    },
-                ]
-            }
-
-    fake = AccessLogLevelClient()
-
-    def override_fake_client():
-        return fake
-
-    from hikari_api.main import client
-
-    app.dependency_overrides[client] = override_fake_client
-    with TestClient(app) as test_client:
-        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
-
-    rows = response.json()["rows"]
-    assert rows[0]["level"] == "info"
-    assert rows[1]["level"] == "error"
-
-
-def test_search_derives_level_from_http_response_status_text():
-    class HttpResponseLevelClient(FakeVictoriaLogsClient):
-        async def query(self, path: str, data: dict):
-            self.calls.append((path, data))
-            return {
-                "rows": [
-                    {
-                        "_time": "2026-05-08T01:08:41Z",
-                        "_msg": 'HTTP Request: POST http://example.local/select/logsql/field_values "HTTP/1.1 200 OK"',
-                        "service": "hikari",
-                    },
-                    {
-                        "_time": "2026-05-08T01:08:42Z",
-                        "_msg": 'HTTP Request: POST http://example.local/select/logsql/query "HTTP/1.1 503 Service Unavailable"',
-                        "service": "hikari",
-                    },
-                ]
-            }
-
-    fake = HttpResponseLevelClient()
-
-    def override_fake_client():
-        return fake
-
-    from hikari_api.main import client
-
-    app.dependency_overrides[client] = override_fake_client
-    with TestClient(app) as test_client:
-        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
-
-    rows = response.json()["rows"]
-    assert rows[0]["level"] == "info"
-    assert rows[1]["level"] == "error"
+    assert "level" not in row
 
 
 def test_hits_facets_and_field_values():
@@ -412,8 +268,7 @@ def test_configured_facet_aliases_copy_host_and_service_names():
     query = with_copy_pipes("_time:15m", TEST_FIELD_MAPPINGS)
     assert "copy service_name as service" in query
     assert "copy host_name as host" in query
-    assert "copy severity_text as level" in query
-    assert "copy levelName as level" in query
+    assert " as level" not in query
 
 
 def test_tail_errors_are_streamed_as_sse_error_events():
@@ -597,7 +452,7 @@ def test_ai_expands_grouped_level_filters_to_observed_variants():
     assert result["query"] == '_time:15m service:"billing-api" level:in("error", "ERROR")'
 
 
-def test_ai_expands_level_filter_to_observed_severity_text_field():
+def test_ai_does_not_expand_level_filter_to_noncanonical_level_field():
     parsed = {
         "query": '_time:15m service:"billing-api" level:error',
         "explanation": "Finds Billing API errors.",
@@ -606,7 +461,7 @@ def test_ai_expands_level_filter_to_observed_severity_text_field():
     discovery = {
         "field_values": {
             "level": [],
-            "severity_text": [
+            "legacy_level": [
                 {"value": "Error", "hits": 10},
                 {"value": "Fatal", "hits": 2},
                 {"value": "Information", "hits": 3},
@@ -616,7 +471,7 @@ def test_ai_expands_level_filter_to_observed_severity_text_field():
 
     result = ai._apply_observed_query_expansions(parsed, discovery, "why is Billing API failing?")
 
-    assert result["query"] == '_time:15m service:"billing-api" severity_text:in("Error", "Fatal")'
+    assert result["query"] == '_time:15m service:"billing-api" level:error'
 
 
 def test_ai_uses_requested_level_when_model_mixes_warning_with_errors():

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -23,7 +22,6 @@ FALLBACK_FIELD_MAPPINGS: dict[str, Any] = {
         {"field": "level", "label": "Level", "summary": True},
         {"field": "source", "label": "Source"},
     ],
-    "derivedFields": {},
 }
 
 
@@ -91,42 +89,13 @@ def _normalize(config: dict[str, Any]) -> dict[str, Any]:
             )
         if facets:
             normalized["facets"] = facets
-    if isinstance(config.get("derivedFields"), dict):
-        derived_fields: dict[str, list[dict[str, Any]]] = {}
-        for field, rules in config["derivedFields"].items():
-            if not isinstance(rules, list):
-                continue
-            clean_rules = []
-            for rule in rules:
-                if not isinstance(rule, dict):
-                    continue
-                rule_type = str(rule.get("type", "")).strip()
-                sources = _string_list(rule.get("sources")) or _string_list([rule.get("source")])
-                if not rule_type or not sources:
-                    continue
-                clean_rule: dict[str, Any] = {"type": rule_type, "sources": sources}
-                if rule.get("path"):
-                    clean_rule["path"] = str(rule["path"]).strip()
-                if rule.get("pattern"):
-                    clean_rule["pattern"] = str(rule["pattern"])
-                if rule.get("queryPattern"):
-                    clean_rule["queryPattern"] = str(rule["queryPattern"])
-                if rule.get("flags"):
-                    clean_rule["flags"] = str(rule["flags"]).strip()
-                if rule.get("value") is not None:
-                    clean_rule["value"] = str(rule["value"]).strip()
-                if clean_rule.get("path") or (clean_rule.get("pattern") and clean_rule.get("value")):
-                    clean_rules.append(clean_rule)
-            if clean_rules:
-                derived_fields[str(field).strip()] = clean_rules
-        normalized["derivedFields"] = derived_fields
     return normalized
 
 
 def _merge_config(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = deepcopy(base)
     for key, value in override.items():
-        if key in {"aliases", "derivedFields"} and isinstance(value, dict) and isinstance(merged.get(key), dict):
+        if key == "aliases" and isinstance(value, dict) and isinstance(merged.get(key), dict):
             merged[key] = {**merged[key], **value}
         else:
             merged[key] = value
@@ -160,7 +129,7 @@ def copy_pipes_for(config: dict[str, Any]) -> list[str]:
     pipes: list[str] = []
     for target, values in aliases.items():
         target_field = str(target).strip()
-        if not target_field:
+        if not target_field or target_field == "level":
             continue
         for source in _string_list(values):
             if source == target_field:
@@ -188,64 +157,6 @@ def _row_value(row: dict[str, Any], field: str) -> Any:
     return None
 
 
-def _canonical_level(value: Any) -> str | None:
-    normalized = str(value).strip().lower()
-    if normalized in {"fatal", "critical", "err", "error"}:
-        return "error"
-    if normalized in {"warn", "warning"}:
-        return "warning"
-    if normalized in {"info", "information"}:
-        return "info"
-    if normalized in {"debug", "trace", "verbose"}:
-        return normalized
-    return normalized or None
-
-
-def _json_path_value(value: Any, path: str) -> Any:
-    if isinstance(value, str):
-        raw = value.strip()
-        if not raw.startswith("{"):
-            return None
-        try:
-            value = json.loads(raw)
-        except json.JSONDecodeError:
-            return None
-    current = value
-    for part in path.split("."):
-        if not isinstance(current, dict):
-            return None
-        current = current.get(part)
-    return current
-
-
-def _derive_field(row: dict[str, Any], config: dict[str, Any], field: str) -> str | None:
-    rules = config.get("derivedFields", {}).get(field, [])
-    if not isinstance(rules, list):
-        return None
-    for rule in rules:
-        if not isinstance(rule, dict):
-            continue
-        rule_type = rule.get("type")
-        sources = _string_list(rule.get("sources"))
-        for source in sources:
-            value = _row_value(row, source)
-            if value is None:
-                continue
-            if rule_type == "json":
-                derived = _json_path_value(value, str(rule.get("path", "")))
-                if derived is not None:
-                    return _canonical_level(derived) if field == "level" else str(derived)
-            if rule_type == "regex" and rule.get("pattern") and rule.get("value"):
-                flags = re.IGNORECASE if "i" in str(rule.get("flags", "")) else 0
-                if re.search(str(rule["pattern"]), str(value), flags=flags):
-                    return _canonical_level(rule["value"]) if field == "level" else str(rule["value"])
-    return None
-
-
-def _level_from_message(row: dict[str, Any], config: dict[str, Any]) -> str | None:
-    return _derive_field(row, config, "level")
-
-
 def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     """Populate missing canonical row fields from their configured alias sources."""
     normalized = dict(row)
@@ -262,10 +173,6 @@ def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[s
             if value is not None:
                 normalized[target_field] = value
                 break
-    if _row_value(normalized, "level") is None:
-        inferred_level = _level_from_message(normalized, config)
-        if inferred_level:
-            normalized["level"] = inferred_level
     return normalized
 
 

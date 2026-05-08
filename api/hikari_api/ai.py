@@ -21,8 +21,6 @@ DISCOVERY_FIELDS = [
     "host",
     "hostname",
     "level",
-    "severity",
-    "severity_text",
     "status",
     "client",
     "kubernetes.pod_namespace",
@@ -93,8 +91,8 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
             "Do not simply translate the prompt literally when observed values suggest a different spelling. "
             "When filtering on a structured field, use exact values that appear verbatim in observed field_values "
             "or sample rows. Do not add typo variants or guessed field values to structured field filters. "
-            "For severity, use the observed severity field. If severity_text is populated and level is not, "
-            "filter on severity_text rather than level. "
+            "For severity, use the canonical level field only. If level is missing, the ingestion pipeline "
+            "needs to normalize levels before Hikari can filter on them. "
             "When prior conversation or incident context is provided, treat the new request as a follow-up. "
             "Use the previous query, explanation, evidence, result totals, and sample rows to refine the search "
             "instead of starting over. "
@@ -280,8 +278,6 @@ def _summarize_row(row: dict[str, Any]) -> dict[str, Any]:
         "host",
         "hostname",
         "level",
-        "severity",
-        "severity_text",
         "_msg",
         "message",
         "msg",
@@ -501,11 +497,7 @@ def _unquote_level_filter_value(value: str) -> str:
 
 def _observed_level_field_and_variants(discovery: dict[str, Any], canonical: str) -> tuple[str, list[str]]:
     field_values = discovery.get("field_values", {})
-    for field in ("level", "severity_text", "severity"):
-        values = _level_variants_for_field(field_values.get(field, []), canonical)
-        if values:
-            return field, values
-    return "level", []
+    return "level", _level_variants_for_field(field_values.get("level", []), canonical)
 
 
 def _level_variants_for_field(levels: list[Any], canonical: str) -> list[str]:

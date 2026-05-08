@@ -54,7 +54,7 @@ Common environment variables:
 - `HIKARI_VICTORIA_HEADERS`: optional JSON object of extra headers for VictoriaLogs.
 - `HIKARI_DEFAULT_QUERY`: default LogsQL query, usually `_time:15m`.
 - `HIKARI_DEFAULT_FIELDS`: comma-separated fields to surface in the UI.
-- `HIKARI_FIELD_MAPPINGS_FILE`: JSON file that defines canonical fields, aliases, derived fields, and default facets.
+- `HIKARI_FIELD_MAPPINGS_FILE`: JSON file that defines canonical fields, aliases, and default facets.
 - `HIKARI_FIELD_MAPPINGS`: optional inline JSON override for field mappings.
 - `HIKARI_FACET_PREVIEW_LIMIT`: number of facet values shown before a `View more` expander appears. Defaults to `10`.
 - `OPENAI_API_KEY`: optional, enables natural-language query generation.
@@ -72,11 +72,12 @@ AWS Secrets Manager variants are supported for deployments that load secrets at 
 Field and facet mappings live in `config/field-mappings.json`. Use this file to map your log schema into Hikari's canonical UI concepts without hard-coding source-specific fields into the app.
 
 - `defaultFields` controls the fields shown first in selectors and discovery.
-- `aliases` maps source fields into canonical fields such as `service`, `host`, and `level`.
-- `derivedFields` maps values embedded in message fields, such as JSON payload levels or access-log status codes, into canonical fields. Hikari turns regex derived-field rules into VictoriaLogs regex filters for level facets and histograms. Use `queryPattern` when VictoriaLogs needs different regex syntax than local row normalization.
+- `aliases` maps stored source fields into canonical fields such as `service`, `host`, and `level`.
 - `facets` controls the left sidebar facet groups and MCP summary facets.
 
 For example, `service.name` and `service_name` can both populate the canonical `service` facet, while `host.name` and `host_name` can populate `host`. Hikari applies those aliases to backend VictoriaLogs requests with hidden LogsQL `copy` pipes, so users still see clean queries like `_time:15m service:="api"`.
+
+Hikari does not derive canonical fields from message text at read time. If `level`, `service`, or `host` is embedded inside `_msg`, JSON payloads, or access-log text, normalize those fields in your collector or application before writing to VictoriaLogs.
 
 The Helm chart can mount this configuration from `fieldMappings.config` as `/app/config/field-mappings.json`. See `INSTALLATION.md` for the full mapping format and Kubernetes values example.
 
