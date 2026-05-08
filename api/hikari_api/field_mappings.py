@@ -359,6 +359,13 @@ def _field_filter(field: str, values: list[str], *, include_empty: bool = False)
     return f"{field}:in({quoted})"
 
 
+def _value_variants(value: str) -> list[str]:
+    clean = value.strip()
+    if not clean:
+        return []
+    return [clean, clean.lower(), clean.upper(), clean[:1].upper() + clean[1:].lower()]
+
+
 def severity_filter_clause(config: dict[str, Any], canonical: str) -> str:
     """Build a LogsQL clause that matches a canonical severity across structured fields."""
     text_values = severity_filter_values_for(config, canonical)
@@ -383,18 +390,45 @@ def default_missing_level_filter_clause(config: dict[str, Any], canonical: str) 
     """Build the post-pipe level filter used when missing levels map to a default canonical."""
     if canonical != severity_default_missing(config):
         return ""
-    field = str(severity_config(config).get("canonicalField") or "level")
-    return _field_filter(field, severity_filter_values_for(config, canonical, include_missing=True), include_empty=True)
+    severity = severity_config(config)
+    field = str(severity.get("canonicalField") or "level")
+    positive = _field_filter(field, severity_filter_values_for(config, canonical, include_missing=True), include_empty=True)
+    if not positive:
+        return ""
+
+    non_default_text_values: list[str] = []
+    for level in SEVERITY_DISPLAY_LEVELS:
+        if level == canonical:
+            continue
+        if level in SEVERITY_CANONICALS:
+            non_default_text_values.extend(severity_query_values_for(config, level))
+        else:
+            non_default_text_values.extend(_value_variants(level))
+    non_default_number_values: list[str] = []
+    for level in SEVERITY_CANONICALS:
+        if level != canonical:
+            non_default_number_values.extend(severity_numbers_for(config, level))
+
+    negative_clauses = [
+        _field_filter(field, non_default_text_values)
+        for field in _string_list(severity.get("textFields"))
+    ]
+    negative_clauses.extend(
+        _field_filter(field, non_default_number_values)
+        for field in _string_list(severity.get("numberFields"))
+    )
+    negative_clauses = [clause for clause in negative_clauses if clause]
+    if not negative_clauses:
+        return positive
+    negative = negative_clauses[0] if len(negative_clauses) == 1 else f"({' OR '.join(negative_clauses)})"
+    return f"{positive} NOT {negative}"
 
 
 def exact_level_filter_clause(config: dict[str, Any], values: list[str]) -> str:
     """Build a post-pipe exact level filter for non-canonical facet values."""
     variants: list[str] = []
     for value in values:
-        clean = value.strip()
-        if not clean:
-            continue
-        variants.extend([clean, clean.lower(), clean.upper(), clean[:1].upper() + clean[1:].lower()])
+        variants.extend(_value_variants(value))
     variants = list(dict.fromkeys(variants))
     if not variants:
         return ""

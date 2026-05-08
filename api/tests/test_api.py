@@ -337,13 +337,20 @@ def test_level_field_values_fold_empty_bucket_into_default_missing_info():
     app.dependency_overrides[client] = override_fake_client
     app.dependency_overrides[get_settings] = override_settings_default_missing_info
     with TestClient(app) as test_client:
-        values = test_client.get("/api/field-values", params={"query": "_time:15m", "field": "level"})
-        facets = test_client.post("/api/facets", json={"query": "_time:15m", "fields": ["level"]})
+        values = test_client.get("/api/field-values", params={"query": "_time:15m level:info", "field": "level"})
+        facets = test_client.post("/api/facets", json={"query": "_time:15m level:info", "fields": ["level"]})
 
     assert values.json()["values"] == [{"value": "warning", "hits": 2}, {"value": "info", "hits": 8}]
     assert facets.json()["facets"] == [{"field": "level", "values": [{"value": "warning", "hits": 2}, {"value": "info", "hits": 8}]}]
-    level_call = next(data for path, data in fake.calls if path == "/select/logsql/field_values" and data["field"] == "level")
-    assert "unpack_json" in level_call["query"]
+    level_calls = [data for path, data in fake.calls if path == "/select/logsql/field_values" and data["field"] == "level"]
+    assert len(level_calls) == 2
+    for level_call in level_calls:
+        assert "unpack_json" in level_call["query"]
+        assert "level:info" not in level_call["query"]
+        assert '""' in level_call["query"]
+        assert " NOT " in level_call["query"]
+        assert '"verbose"' in level_call["query"]
+        assert "severity_number:in" in level_call["query"]
 
 
 def test_level_field_values_keep_debug_sublevels_distinct():
@@ -469,6 +476,9 @@ def test_level_info_filter_includes_missing_only_when_configured_as_default():
 
     assert "| filter level:in(" in info_query
     assert '""' in info_query
+    assert " NOT " in info_query
+    assert '"verbose"' in info_query
+    assert "severity_number:in" in info_query
     assert "level:info" not in info_query
     assert "| filter level:in(" not in error_query
     assert '""' not in error_query
