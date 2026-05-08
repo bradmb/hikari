@@ -54,6 +54,7 @@ export type FieldMappings = {
   aliases: Record<string, string[]>;
   severity?: {
     canonicalField?: string;
+    defaultMissing?: "error" | "warning" | "info" | "debug" | null;
     textFields?: string[];
     numberFields?: string[];
     values?: Record<string, string[]>;

@@ -15,6 +15,7 @@ from .field_mappings import (
     get_field_mappings,
     normalize_row_aliases,
     normalize_rows_aliases,
+    severity_default_missing,
     summary_facets,
     with_copy_pipes,
 )
@@ -145,7 +146,10 @@ async def _canonical_level_values(query: str, limit: int, start: str | None = No
     )
     totals = {canonical: 0 for canonical in SEVERITY_CANONICALS}
     for item in _values(result):
-        canonical = canonical_severity(item.get("value"), config)
+        raw_value = item.get("value")
+        canonical = canonical_severity(raw_value, config)
+        if canonical is None and raw_value is not None and str(raw_value).strip() == "":
+            canonical = severity_default_missing(config)
         if canonical:
             totals[canonical] += int(item.get("hits") or 0)
     return [{"value": level, "hits": hits} for level, hits in totals.items() if hits][:limit]

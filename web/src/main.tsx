@@ -720,8 +720,13 @@ function levelLabel(level: string): string {
   return level ? level.slice(0, 3).toUpperCase() : "—";
 }
 
+function defaultMissingLevel(): string {
+  const value = activeFieldMappings.severity?.defaultMissing;
+  return value === "error" || value === "warning" || value === "info" || value === "debug" ? value : "";
+}
+
 function levelValue(row: LogRow): string {
-  return firstFieldValue(row, aliasFieldsForFilter("level")) || "unknown";
+  return firstFieldValue(row, aliasFieldsForFilter("level")) || defaultMissingLevel() || "unknown";
 }
 
 function fieldValue(row: LogRow, field: string): string {
@@ -773,6 +778,7 @@ function canonicalLevel(value: string): string {
 
 function displayFacetValue(field: string, value: string): string {
   if (field !== "level") return value;
+  if (!value.trim()) return defaultMissingLevel();
   const normalized = canonicalLevel(value);
   if (normalized === "error") return "error";
   if (normalized === "warning") return "warning";

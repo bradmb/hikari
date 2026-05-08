@@ -106,7 +106,7 @@ The mapping has three parts:
 
 - `defaultFields`: fields shown first in manual field selectors and field discovery.
 - `aliases`: source fields that should populate a canonical Hikari field.
-- `severity`: structured severity fields and values that should behave like the canonical `level` field.
+- `severity`: structured severity fields and values that should behave like the canonical `level` field. Its optional `defaultMissing` accepts `error`, `warning`, `info`, `debug`, or `null`.
 - `facets`: the facet groups shown in the left sidebar and MCP summaries.
 
 Use `aliases` to map your log schema into canonical fields. The first item can be the canonical field itself, followed by every source field that may contain the same value:
@@ -144,8 +144,11 @@ Hikari expects canonical facet values to come from structured VictoriaLogs field
 severity fields to the canonical `level` field in the same spirit as the VictoriaLogs Grafana plugin. For
 common message-only severity formats, Hikari can also append configurable VictoriaLogs `unpack_json` and
 `extract_regexp` pipes so VictoriaLogs performs the extraction before returning rows, field values, facets,
-histograms, MCP data, and AI context. Prefer normalizing at ingestion when possible; query-time extraction is
-best used as compatibility for mixed or older log streams.
+histograms, MCP data, and AI context. The OSS mapping sets `severity.defaultMissing` to `info`, which means
+rows with no structured or extracted severity are displayed and filtered as canonical `info`. This is
+query/display-time normalization, not ingestion rewriting. Prefer normalizing at ingestion when possible;
+query-time extraction is best used as compatibility for mixed or older log streams, and ingestion-time
+normalization remains the fastest long-term option for very large deployments.
 
 Use `facets` to choose the canonical fields shown in the left sidebar and MCP summary output:
 
@@ -205,6 +208,7 @@ fieldMappings:
         - SeverityNumber
     severity:
       canonicalField: level
+      defaultMissing: info
       textFields:
         - level
         - severity_text
@@ -286,7 +290,8 @@ For non-Helm deployments, set `HIKARI_FIELD_MAPPINGS_FILE` to a mounted JSON fil
 Hikari treats `level` as its canonical severity field. It can map structured source fields such as
 `severity_text`, `SeverityText`, `severity`, and OpenTelemetry `severity_number` into that canonical value.
 It can also run configured VictoriaLogs `extractPipes` to extract common `_msg` formats such as JSON logs,
-Kubernetes `W0508...` prefixes, and Nginx-style `[warn]` text. If every row shows `unknown` or appears to
+Kubernetes `W0508...` prefixes, and Nginx-style `[warn]` text. If `severity.defaultMissing` is set, rows with
+no severity signal use that canonical level at query/display time. If every row shows `unknown` or appears to
 have the wrong level, check what VictoriaLogs actually stored and which mapping file Hikari mounted.
 
 1. Query a recent row and inspect the top-level fields:

@@ -11,7 +11,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from hikari_api import ai
 from hikari_api import hikari_mcp
-from hikari_api.field_mappings import expand_level_filters, normalize_row_aliases, with_copy_pipes
+from hikari_api.field_mappings import expand_level_filters, get_field_mappings, normalize_row_aliases, with_copy_pipes
 from hikari_api.main import app
 from hikari_api.models import AiQueryRequest, AiQueryResponse
 from hikari_api.settings import Settings, get_settings
@@ -150,6 +150,25 @@ def override_settings_without_ai() -> Settings:
     )
 
 
+def mappings_with_default_missing(default: str | None = "info") -> dict:
+    config = json.loads(json.dumps(TEST_FIELD_MAPPINGS))
+    if default is None:
+        config["severity"]["defaultMissing"] = None
+    else:
+        config["severity"]["defaultMissing"] = default
+    return config
+
+
+def override_settings_default_missing_info() -> Settings:
+    return Settings(
+        HIKARI_VICTORIA_URL="http://victorialogs",
+        HIKARI_DEFAULT_QUERY="_time:15m",
+        HIKARI_DEFAULT_FIELDS="service,level",
+        HIKARI_FIELD_MAPPINGS=mappings_with_default_missing("info"),
+        OPENAI_API_KEY="test-key",
+    )
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
@@ -256,6 +275,40 @@ def test_search_does_not_derive_level_from_message_when_structured_level_is_miss
     assert "level" not in row
 
 
+def test_config_normalizes_default_missing_values():
+    missing = get_field_mappings(
+        Settings(HIKARI_FIELD_MAPPINGS_FILE="missing-field-mappings.json", HIKARI_FIELD_MAPPINGS={"severity": {"canonicalField": "level"}})
+    )
+    valid = get_field_mappings(
+        Settings(HIKARI_FIELD_MAPPINGS_FILE="missing-field-mappings.json", HIKARI_FIELD_MAPPINGS={"severity": {"canonicalField": "level", "defaultMissing": "info"}})
+    )
+    invalid = get_field_mappings(
+        Settings(HIKARI_FIELD_MAPPINGS_FILE="missing-field-mappings.json", HIKARI_FIELD_MAPPINGS={"severity": {"canonicalField": "level", "defaultMissing": "nope"}})
+    )
+
+    assert "defaultMissing" not in missing["severity"]
+    assert valid["severity"]["defaultMissing"] == "info"
+    assert "defaultMissing" not in invalid["severity"]
+
+
+def test_config_reports_default_missing_info():
+    app.dependency_overrides[get_settings] = override_settings_default_missing_info
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/config")
+
+    assert response.status_code == 200
+    assert response.json()["fieldMappings"]["severity"]["defaultMissing"] == "info"
+
+
+def test_search_maps_missing_level_to_configured_default():
+    app.dependency_overrides[get_settings] = override_settings_default_missing_info
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
+
+    assert response.status_code == 200
+    assert response.json()["rows"][0]["level"] == "info"
+
+
 def test_hits_facets_and_field_values():
     with TestClient(app) as test_client:
         hits = test_client.post("/api/hits", json={"query": "_time:15m", "step": "1m"})
@@ -264,6 +317,33 @@ def test_hits_facets_and_field_values():
     assert hits.json()["values"][0]["hits"] == 4
     assert facets.json()["facets"][0]["field"] == "service"
     assert values.json()["values"][0]["value"] == "api"
+
+
+def test_level_field_values_fold_empty_bucket_into_default_missing_info():
+    class LevelValuesClient(FakeVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            if path == "/select/logsql/field_values" and data["field"] == "level":
+                return {"values": [{"value": "info", "hits": 3}, {"value": "", "hits": 5}, {"value": "warn", "hits": 2}]}
+            return await super().query(path, data)
+
+    fake = LevelValuesClient()
+
+    def override_fake_client():
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    app.dependency_overrides[get_settings] = override_settings_default_missing_info
+    with TestClient(app) as test_client:
+        values = test_client.get("/api/field-values", params={"query": "_time:15m", "field": "level"})
+        facets = test_client.post("/api/facets", json={"query": "_time:15m", "fields": ["level"]})
+
+    assert values.json()["values"] == [{"value": "warning", "hits": 2}, {"value": "info", "hits": 8}]
+    assert facets.json()["facets"] == [{"field": "level", "values": [{"value": "warning", "hits": 2}, {"value": "info", "hits": 8}]}]
+    level_call = next(data for path, data in fake.calls if path == "/select/logsql/field_values" and data["field"] == "level")
+    assert "unpack_json" in level_call["query"]
 
 
 def test_api_facets_apply_configured_copy_pipes():
@@ -334,6 +414,19 @@ def test_level_filters_expand_to_structured_severity_fields():
     assert "_msg:~" in query
     assert '"Error"' in query
     assert '"17"' in query
+
+
+def test_level_info_filter_includes_missing_only_when_configured_as_default():
+    config = mappings_with_default_missing("info")
+    info_query = with_copy_pipes("_time:15m level:info", config)
+    error_query = with_copy_pipes("_time:15m level:error", config)
+
+    assert "| filter level:in(" in info_query
+    assert '""' in info_query
+    assert "level:info" not in info_query
+    assert "| filter level:in(" not in error_query
+    assert '""' not in error_query
+    assert "severity_number:in" in error_query
 
 
 def test_rows_normalize_structured_severity_text_and_number():

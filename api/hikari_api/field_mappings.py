@@ -20,6 +20,7 @@ FALLBACK_FIELD_MAPPINGS: dict[str, Any] = {
     },
     "severity": {
         "canonicalField": "level",
+        "defaultMissing": "info",
         "textFields": ["level", "severity_text", "SeverityText", "severity", "Severity", "severityText", "level_name", "levelName"],
         "numberFields": ["severity_number", "SeverityNumber", "severityNumber"],
         "values": {
@@ -141,6 +142,18 @@ def _normalize(config: dict[str, Any]) -> dict[str, Any]:
         canonical = str(override.get("canonicalField") or severity["canonicalField"]).strip()
         if canonical:
             severity["canonicalField"] = canonical
+        if "defaultMissing" in override:
+            default_missing = override.get("defaultMissing")
+            if default_missing is None:
+                severity.pop("defaultMissing", None)
+            else:
+                default_missing = str(default_missing).strip().lower()
+                if default_missing in SEVERITY_CANONICALS:
+                    severity["defaultMissing"] = default_missing
+                else:
+                    severity.pop("defaultMissing", None)
+        else:
+            severity.pop("defaultMissing", None)
         for key in ("textFields", "numberFields"):
             values = _string_list(override.get(key))
             if values:
@@ -220,6 +233,14 @@ def severity_config(config: dict[str, Any]) -> dict[str, Any]:
     return severity if isinstance(severity, dict) else FALLBACK_FIELD_MAPPINGS["severity"]
 
 
+def severity_default_missing(config: dict[str, Any]) -> str | None:
+    value = severity_config(config).get("defaultMissing")
+    if value is None:
+        return None
+    canonical = str(value).strip().lower()
+    return canonical if canonical in SEVERITY_CANONICALS else None
+
+
 def canonical_severity(value: Any, config: dict[str, Any]) -> str | None:
     """Map structured severity text values to Hikari's canonical level names."""
     text = str(value).strip()
@@ -271,6 +292,14 @@ def severity_query_values_for(config: dict[str, Any], canonical: str) -> list[st
     return list(dict.fromkeys(values))
 
 
+def severity_filter_values_for(config: dict[str, Any], canonical: str, *, include_missing: bool = False) -> list[str]:
+    """Return structured severity values for LogsQL field filtering."""
+    values = severity_query_values_for(config, canonical)
+    if include_missing:
+        values.append("")
+    return list(dict.fromkeys(values))
+
+
 def severity_numbers_for(config: dict[str, Any], canonical: str) -> list[str]:
     ranges = severity_config(config).get("numberRanges", {})
     value_range = ranges.get(canonical) if isinstance(ranges, dict) else None
@@ -294,8 +323,8 @@ def severity_extract_pipes(config: dict[str, Any]) -> list[str]:
     return _string_list(severity_config(config).get("extractPipes"))
 
 
-def _field_filter(field: str, values: list[str]) -> str:
-    unique = list(dict.fromkeys(value for value in values if value))
+def _field_filter(field: str, values: list[str], *, include_empty: bool = False) -> str:
+    unique = list(dict.fromkeys(value for value in values if value or include_empty))
     if not unique:
         return ""
     quoted = ",".join(json.dumps(value) for value in unique)
@@ -304,7 +333,7 @@ def _field_filter(field: str, values: list[str]) -> str:
 
 def severity_filter_clause(config: dict[str, Any], canonical: str) -> str:
     """Build a LogsQL clause that matches a canonical severity across structured fields."""
-    text_values = severity_query_values_for(config, canonical)
+    text_values = severity_filter_values_for(config, canonical)
     number_values = severity_numbers_for(config, canonical)
     severity = severity_config(config)
     clauses = [
@@ -320,6 +349,14 @@ def severity_filter_clause(config: dict[str, Any], canonical: str) -> str:
     if not clauses:
         return ""
     return f"({' OR '.join(clauses)})"
+
+
+def default_missing_level_filter_clause(config: dict[str, Any], canonical: str) -> str:
+    """Build the post-pipe level filter used when missing levels map to a default canonical."""
+    if canonical != severity_default_missing(config):
+        return ""
+    field = str(severity_config(config).get("canonicalField") or "level")
+    return _field_filter(field, severity_filter_values_for(config, canonical, include_missing=True), include_empty=True)
 
 
 def _split_query_pipes(query: str) -> tuple[str, str]:
@@ -373,6 +410,65 @@ def expand_level_filters(query: str, config: dict[str, Any]) -> str:
     return f"{head} {pipes}".strip() if pipes else head
 
 
+def _remove_simple_default_missing_filter(query: str, config: dict[str, Any]) -> tuple[str, str]:
+    """Move a simple default-missing level filter to a post-extraction pipe filter.
+
+    This intentionally handles the common UI/API form, such as ``level:info`` or
+    ``level:in("info","INFO")``. Mixed severity OR filters stay on the existing
+    structured expansion path so they do not accidentally become an AND filter.
+    """
+    default_missing = severity_default_missing(config)
+    if not default_missing:
+        return query, ""
+
+    head, pipes = _split_query_pipes(query)
+    if not head:
+        return query, ""
+
+    canonical_field = re.escape(str(severity_config(config).get("canonicalField") or "level"))
+    filters: list[str] = []
+
+    def all_default(values: str) -> bool:
+        parsed = _parse_level_values(values)
+        return bool(parsed) and all(canonical_severity(value, config) == default_missing for value in parsed)
+
+    def is_negated(match: re.Match[str]) -> bool:
+        return head[: match.start()].rstrip().lower().endswith("not")
+
+    in_pattern = re.compile(rf"(?<![\w.]){canonical_field}:in\((?P<values>[^)]*)\)", re.IGNORECASE)
+    group_pattern = re.compile(rf"(?<![\w.]){canonical_field}:\((?P<values>[^)]*)\)", re.IGNORECASE)
+    value_pattern = re.compile(
+        rf"(?<![\w.]){canonical_field}:(?:=\"(?P<exact>[^\"]+)\"|\"(?P<quoted>[^\"]+)\"|(?P<word>[A-Za-z][\w-]*))",
+        re.IGNORECASE,
+    )
+
+    def replace_values(match: re.Match[str]) -> str:
+        if is_negated(match):
+            return match.group(0)
+        if not all_default(match.group("values")):
+            return match.group(0)
+        filters.append(default_missing)
+        return " "
+
+    def replace_value(match: re.Match[str]) -> str:
+        if is_negated(match):
+            return match.group(0)
+        value = match.group("exact") or match.group("quoted") or match.group("word") or ""
+        if canonical_severity(value, config) != default_missing:
+            return match.group(0)
+        filters.append(default_missing)
+        return " "
+
+    head = in_pattern.sub(replace_values, head)
+    head = group_pattern.sub(replace_values, head)
+    head = value_pattern.sub(replace_value, head)
+    if not filters:
+        return query, ""
+    head = re.sub(r"\s+", " ", head).strip() or "_time:15m"
+    post_filter = default_missing_level_filter_clause(config, default_missing)
+    return (f"{head} {pipes}".strip() if pipes else head), post_filter
+
+
 def with_severity_filter(query: str, canonical: str, config: dict[str, Any]) -> str:
     """Add a canonical severity filter before any LogsQL pipes."""
     clause = severity_filter_clause(config, canonical)
@@ -409,6 +505,7 @@ def with_copy_pipes(query: str, config: dict[str, Any]) -> str:
     clean_query = query.strip()
     if not clean_query:
         clean_query = "_time:15m"
+    clean_query, default_missing_filter = _remove_simple_default_missing_filter(clean_query, config)
     clean_query = expand_level_filters(clean_query, config)
     existing = clean_query.lower()
     pipes = [
@@ -416,6 +513,8 @@ def with_copy_pipes(query: str, config: dict[str, Any]) -> str:
         for pipe in [*severity_extract_pipes(config), *copy_pipes_for(config)]
         if f"| {pipe}".lower() not in existing
     ]
+    if default_missing_filter and f"| filter {default_missing_filter}".lower() not in existing:
+        pipes.append(f"filter {default_missing_filter}")
     if not pipes:
         return clean_query
     return f"{clean_query} | {' | '.join(pipes)}"
@@ -444,6 +543,10 @@ def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[s
             if canonical:
                 normalized[canonical_field] = canonical
                 break
+    if _row_value(normalized, canonical_field) is None:
+        default_missing = severity_default_missing(config)
+        if default_missing:
+            normalized[canonical_field] = default_missing
 
     aliases = config.get("aliases", {})
     if not isinstance(aliases, dict):

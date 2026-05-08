@@ -20,6 +20,7 @@ from .field_mappings import (
     get_field_mappings,
     normalize_row_aliases,
     normalize_rows_aliases,
+    severity_default_missing,
     with_copy_pipes,
 )
 from .hikari_mcp import hikari_mcp_app
@@ -86,7 +87,10 @@ async def canonical_level_values(query: str, settings: Settings, vl: VictoriaLog
     for item in result.get("values", []) if isinstance(result, dict) else []:
         if not isinstance(item, dict):
             continue
-        canonical = canonical_severity(item.get("value"), field_mappings)
+        raw_value = item.get("value")
+        canonical = canonical_severity(raw_value, field_mappings)
+        if canonical is None and raw_value is not None and str(raw_value).strip() == "":
+            canonical = severity_default_missing(field_mappings)
         if canonical:
             totals[canonical] += int(item.get("hits") or 0)
     return [{"value": level, "hits": hits} for level, hits in totals.items() if hits][:limit]

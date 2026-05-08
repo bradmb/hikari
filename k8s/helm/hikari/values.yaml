@@ -155,6 +155,7 @@ fieldMappings:
         summary: true
     severity:
       canonicalField: level
+      defaultMissing: info
       textFields:
         - level
         - severity_text

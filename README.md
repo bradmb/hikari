@@ -73,12 +73,14 @@ Field and facet mappings live in `config/field-mappings.json`. Use this file to 
 
 - `defaultFields` controls the fields shown first in selectors and discovery.
 - `aliases` maps stored source fields into canonical fields such as `service`, `host`, and `level`.
-- `severity` maps structured severity fields such as `severity_text` and `severity_number` into Hikari's canonical `level`.
+- `severity` maps structured severity fields such as `severity_text` and `severity_number` into Hikari's canonical `level`. Its optional `defaultMissing` can be `error`, `warning`, `info`, `debug`, or `null`.
 - `facets` controls the left sidebar facet groups and MCP summary facets.
 
 For example, `service.name` and `service_name` can both populate the canonical `service` facet, while `host.name` and `host_name` can populate `host`. Hikari applies those aliases to backend VictoriaLogs requests with hidden LogsQL `copy` pipes, so users still see clean queries like `_time:15m service:="api"`.
 
-Hikari also emulates the VictoriaLogs Grafana plugin's severity handling for its own UI, API, AI, and MCP tools. A clean query like `_time:15m level:="error"` is expanded server-side across configured structured severity fields and optional `_msg` filters. For rows and field values, Hikari can append configurable VictoriaLogs `unpack_json` and `extract_regexp` pipes so VictoriaLogs extracts common message-only levels before returning data. Prefer ingestion-time normalization for high-volume streams, but the query-time mapping keeps mixed schemas usable.
+Hikari also emulates the VictoriaLogs Grafana plugin's severity handling for its own UI, API, AI, and MCP tools. A clean query like `_time:15m level:="error"` is expanded server-side across configured structured severity fields and optional `_msg` filters. For rows and field values, Hikari can append configurable VictoriaLogs `unpack_json` and `extract_regexp` pipes so VictoriaLogs extracts common message-only levels before returning data.
+
+The OSS mapping sets `severity.defaultMissing` to `info`, so rows with no structured or extracted severity are displayed and filtered as canonical `info`. This is query/display-time normalization, not an ingestion rewrite. Prefer ingestion-time normalization for very large or high-volume streams, but the query-time mapping keeps mixed schemas usable.
 
 The Helm chart can mount this configuration from `fieldMappings.config` as `/app/config/field-mappings.json`. See `INSTALLATION.md` for the full mapping format and Kubernetes values example.
 

@@ -44,6 +44,7 @@
   },
   "severity": {
     "canonicalField": "level",
+    "defaultMissing": "info",
     "textFields": ["level", "severity_text", "SeverityText", "severity", "Severity", "severityText", "level_name", "levelName"],
     "numberFields": ["severity_number", "SeverityNumber", "severityNumber"],
     "values": {

@@ -150,7 +150,9 @@ docker compose up mock-victorialogs api web</code></pre>
               maps structured fields such as <code>severity_text</code>, <code>SeverityText</code>, and
               OpenTelemetry <code>severity_number</code> into the canonical <code>level</code> field. It can also
               append configurable VictoriaLogs <code>unpack_json</code> and <code>extract_regexp</code> pipes for
-              common message-only level formats. Prefer ingestion-time normalization for high-volume streams.
+              common message-only level formats. The OSS mapping sets <code>severity.defaultMissing</code> to
+              <code>info</code>, so rows with no severity signal are normalized at query/display time, not rewritten
+              at ingestion. Prefer ingestion-time normalization for high-volume streams and very large deployments.
             </p>
             <p>Use <code>facets</code> to choose the canonical groups shown in the sidebar and MCP summaries.</p>
             <pre class="code-sample"><code>{
@@ -208,6 +210,7 @@ docker compose up mock-victorialogs api web</code></pre>
         - SeverityNumber
     severity:
       canonicalField: level
+      defaultMissing: info
       textFields:
         - level
         - severity_text
@@ -279,9 +282,10 @@ docker compose up mock-victorialogs api web</code></pre>
             <p>
               Hikari reads <code>level</code> as its canonical severity field. It can map structured source fields
               like <code>severity_text</code> and <code>severity_number</code>, and it can run configured
-              VictoriaLogs extraction pipes for common <code>_msg</code> formats. If rows show
-              <code>unknown</code> or appear to have the wrong level, first inspect the fields stored in
-              VictoriaLogs and the mapping file mounted into Hikari.
+              VictoriaLogs extraction pipes for common <code>_msg</code> formats. If
+              <code>severity.defaultMissing</code> is set, rows with no severity signal use that canonical level
+              at query/display time. If rows show <code>unknown</code> or appear to have the wrong level, first
+              inspect the fields stored in VictoriaLogs and the mapping file mounted into Hikari.
             </p>
             <pre class="code-sample"><code>_time:15m | limit 1
 _time:15m level:*
