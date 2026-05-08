@@ -97,7 +97,24 @@ def _facets_from_result(result: Any) -> list[dict[str, Any]]:
     if not isinstance(result, dict):
         return []
     if isinstance(result.get("facets"), list):
-        return result["facets"]
+        facets = []
+        for facet in result["facets"]:
+            if not isinstance(facet, dict):
+                continue
+            field = facet.get("field") or facet.get("field_name")
+            values = facet.get("values")
+            if not field or not isinstance(values, list):
+                continue
+            normalized_values = []
+            for item in values:
+                if not isinstance(item, dict):
+                    continue
+                value = item.get("value", item.get("field_value"))
+                if value is None:
+                    continue
+                normalized_values.append({"value": str(value), "hits": int(item.get("hits") or 0)})
+            facets.append({"field": str(field), "values": normalized_values})
+        return facets
     values = result.get("values")
     if isinstance(values, dict):
         return [
@@ -165,7 +182,7 @@ async def facets(request: FacetsRequest, settings: Settings = Depends(get_settin
     data["query"] = mapped_query(request.query, settings)
     if data["fields"]:
         data["field"] = data.pop("fields")
-    return await vl.query("/select/logsql/facets", data)
+    return {"facets": _facets_from_result(await vl.query("/select/logsql/facets", data))}
 
 
 @app.get("/api/fields")

@@ -224,4 +224,5 @@ fieldMappings:
       extractPipes:
         - unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields
         - extract_regexp '^(?P<level>[IWEF])[0-9]{4}[[:space:]]' from _msg keep_original_fields
+        - extract_regexp '^(?P<level>INFO|WARN|WARNING|ERROR|ERR|DEBUG|TRACE|VERBOSE|FATAL|CRITICAL|emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace|verbose|fatal)[[:space:]:]' from _msg keep_original_fields
         - extract_regexp '[[](?P<level>emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)[]]' from _msg keep_original_fields

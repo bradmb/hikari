@@ -245,6 +245,7 @@ docker compose up mock-victorialogs api web</code></pre>
       extractPipes:
         - unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields
         - extract_regexp '^(?P&lt;level&gt;[IWEF])[0-9]{4}[[:space:]]' from _msg keep_original_fields
+        - extract_regexp '^(?P&lt;level&gt;INFO|WARN|WARNING|ERROR|ERR|DEBUG|TRACE|VERBOSE|FATAL|CRITICAL|emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace|verbose|fatal)[[:space:]:]' from _msg keep_original_fields
         - extract_regexp '[[](?P&lt;level&gt;emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)[]]' from _msg keep_original_fields
     facets:
       - field: environment

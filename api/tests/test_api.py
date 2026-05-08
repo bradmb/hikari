@@ -85,6 +85,7 @@ TEST_FIELD_MAPPINGS = {
         "extractPipes": [
             "unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields",
             "extract_regexp '^(?P<level>[IWEF])[0-9]{4}[[:space:]]' from _msg keep_original_fields",
+            "extract_regexp '^(?P<level>INFO|WARN|WARNING|ERROR|ERR|DEBUG|TRACE|VERBOSE|FATAL|CRITICAL|emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace|verbose|fatal)[[:space:]:]' from _msg keep_original_fields",
             "extract_regexp '[[](?P<level>emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)[]]' from _msg keep_original_fields",
         ],
     },
@@ -283,6 +284,29 @@ def test_api_facets_apply_configured_copy_pipes():
     assert facets_call["field"] == ["service", "host"]
 
 
+def test_api_facets_normalize_victorialogs_field_name_shape():
+    class FieldNameFacetClient(FakeVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            if path == "/select/logsql/facets":
+                return {"facets": [{"field_name": "service", "values": [{"field_value": "api", "hits": 2}]}]}
+            return await super().query(path, data)
+
+    fake = FieldNameFacetClient()
+
+    def override_fake_client():
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/facets", json={"query": "_time:15m", "fields": ["service"]})
+
+    assert response.status_code == 200
+    assert response.json()["facets"] == [{"field": "service", "values": [{"value": "api", "hits": 2}]}]
+
+
 def test_config_reports_ai_disabled_without_openai_key():
     app.dependency_overrides[get_settings] = override_settings_without_ai
     with TestClient(app) as test_client:
@@ -296,9 +320,10 @@ def test_configured_facet_aliases_copy_host_and_service_names():
     query = with_copy_pipes("_time:15m", TEST_FIELD_MAPPINGS)
     assert "unpack_json" in query
     assert "extract_regexp" in query
+    assert "INFO|WARN|WARNING|ERROR" in query
     assert "copy service_name as service" in query
     assert "copy host_name as host" in query
-    assert "copy severity_text as level" in query
+    assert "copy severity_text as level" not in query
 
 
 def test_level_filters_expand_to_structured_severity_fields():

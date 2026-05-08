@@ -57,6 +57,7 @@ FALLBACK_FIELD_MAPPINGS: dict[str, Any] = {
         "extractPipes": [
             "unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields",
             "extract_regexp '^(?P<level>[IWEF])[0-9]{4}[[:space:]]' from _msg keep_original_fields",
+            "extract_regexp '^(?P<level>INFO|WARN|WARNING|ERROR|ERR|DEBUG|TRACE|VERBOSE|FATAL|CRITICAL|emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace|verbose|fatal)[[:space:]:]' from _msg keep_original_fields",
             "extract_regexp '[[](?P<level>emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)[]]' from _msg keep_original_fields",
         ],
     },
@@ -388,10 +389,13 @@ def copy_pipes_for(config: dict[str, Any]) -> list[str]:
     if not isinstance(aliases, dict):
         return []
 
+    severity_field = str(severity_config(config).get("canonicalField") or "level")
     pipes: list[str] = []
     for target, values in aliases.items():
         target_field = str(target).strip()
         if not target_field:
+            continue
+        if target_field == severity_field:
             continue
         for source in _string_list(values):
             if source == target_field:
