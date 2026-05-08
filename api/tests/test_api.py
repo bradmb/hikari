@@ -74,7 +74,7 @@ TEST_FIELD_MAPPINGS = {
             "error": ['_msg:~\'"level"[[:space:]]*:[[:space:]]*"(error|err|fatal|critical|crit|alert|emerg)\'', "_msg:~'[[](emerg|alert|crit|critical|error|err)[]]'", "_msg:~'^E[0-9]{4}'", "_msg:~'^F[0-9]{4}'"],
             "warning": ['_msg:~\'"level"[[:space:]]*:[[:space:]]*"(warn|warning|notice)\'', "_msg:~'[[](warn|warning|notice)[]]'", "_msg:~'^W[0-9]{4}'"],
             "info": ['_msg:~\'"level"[[:space:]]*:[[:space:]]*"(info|information|informational)\'', "_msg:~'^I[0-9]{4}'"],
-            "debug": ['_msg:~\'"level"[[:space:]]*:[[:space:]]*"(debug|trace|verbose)\''],
+            "debug": ['_msg:~\'"level"[[:space:]]*:[[:space:]]*debug\''],
         },
         "numberRanges": {
             "debug": [1, 8],
@@ -427,6 +427,23 @@ def test_level_info_filter_includes_missing_only_when_configured_as_default():
     assert "| filter level:in(" not in error_query
     assert '""' not in error_query
     assert "severity_number:in" in error_query
+
+
+def test_verbose_and_trace_level_filters_remain_exact_values():
+    verbose_query = with_copy_pipes('_time:15m level:="verbose"', TEST_FIELD_MAPPINGS)
+    trace_query = with_copy_pipes('_time:15m level:trace', TEST_FIELD_MAPPINGS)
+    debug_query = with_copy_pipes('_time:15m level:debug', TEST_FIELD_MAPPINGS)
+
+    assert 'level:="verbose"' not in verbose_query
+    assert '| filter level:in("verbose","VERBOSE","Verbose")' in verbose_query
+    assert "severity_text:in" not in verbose_query
+    assert "severity_number:in" not in verbose_query
+    assert "level:trace" not in trace_query
+    assert '| filter level:in("trace","TRACE","Trace")' in trace_query
+    assert "severity_text:in" not in trace_query
+    assert '"debug"' in debug_query
+    assert '"verbose"' not in debug_query
+    assert '"trace"' not in debug_query
 
 
 def test_rows_normalize_structured_severity_text_and_number():

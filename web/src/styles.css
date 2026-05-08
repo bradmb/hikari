@@ -602,6 +602,12 @@ button {
   justify-content: flex-start;
   align-items: center;
   max-width: 100%;
+  min-height: 24px;
+}
+
+.query-active-filters.empty {
+  visibility: hidden;
+  pointer-events: none;
 }
 
 .active-filters button {

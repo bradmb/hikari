@@ -46,7 +46,7 @@ FALLBACK_FIELD_MAPPINGS: dict[str, Any] = {
                 "_msg:~'^I[0-9]{4}'",
             ],
             "debug": [
-                "_msg:~'\"level\"[[:space:]]*:[[:space:]]*\"(debug|trace|verbose)'",
+                "_msg:~'\"level\"[[:space:]]*:[[:space:]]*\"debug'",
             ],
         },
         "numberRanges": {
@@ -256,6 +256,19 @@ def canonical_severity(value: Any, config: dict[str, Any]) -> str | None:
     return None
 
 
+def _expandable_filter_severity(value: Any, config: dict[str, Any]) -> str | None:
+    """Return the canonical severity only for user filters that should broaden.
+
+    Trace and verbose are displayed as debug-colored severities, but they can
+    appear as distinct level facet values. Keep those filters exact instead of
+    broadening them to every debug-like value.
+    """
+    canonical = canonical_severity(value, config)
+    if canonical == "debug" and str(value).strip().lower() not in {"debug"}:
+        return None
+    return canonical
+
+
 def canonical_severity_number(value: Any, config: dict[str, Any]) -> str | None:
     """Map OpenTelemetry severity_number values to Hikari's canonical level names."""
     try:
@@ -295,6 +308,8 @@ def severity_query_values_for(config: dict[str, Any], canonical: str) -> list[st
 def severity_filter_values_for(config: dict[str, Any], canonical: str, *, include_missing: bool = False) -> list[str]:
     """Return structured severity values for LogsQL field filtering."""
     values = severity_query_values_for(config, canonical)
+    if canonical == "debug":
+        values = [value for value in values if value.lower() == "debug"]
     if include_missing:
         values.append("")
     return list(dict.fromkeys(values))
@@ -359,6 +374,18 @@ def default_missing_level_filter_clause(config: dict[str, Any], canonical: str) 
     return _field_filter(field, severity_filter_values_for(config, canonical, include_missing=True), include_empty=True)
 
 
+def exact_level_filter_clause(config: dict[str, Any], values: list[str]) -> str:
+    """Build a post-pipe exact level filter for non-canonical facet values."""
+    field = str(severity_config(config).get("canonicalField") or "level")
+    variants: list[str] = []
+    for value in values:
+        clean = value.strip()
+        if not clean:
+            continue
+        variants.extend([clean, clean.lower(), clean.upper(), clean[:1].upper() + clean[1:].lower()])
+    return _field_filter(field, variants)
+
+
 def _split_query_pipes(query: str) -> tuple[str, str]:
     quote: str | None = None
     for index, ch in enumerate(query):
@@ -389,9 +416,12 @@ def expand_level_filters(query: str, config: dict[str, Any]) -> str:
     )
 
     def replace_values(match: re.Match[str]) -> str:
+        parsed = _parse_level_values(match.group("values"))
+        if any(_expandable_filter_severity(value, config) is None for value in parsed):
+            return match.group(0)
         clauses = [
             severity_filter_clause(config, canonical)
-            for canonical in {canonical_severity(value, config) for value in _parse_level_values(match.group("values"))}
+            for canonical in {_expandable_filter_severity(value, config) for value in parsed}
             if canonical
         ]
         clauses = [clause for clause in clauses if clause]
@@ -401,7 +431,7 @@ def expand_level_filters(query: str, config: dict[str, Any]) -> str:
 
     def replace_value(match: re.Match[str]) -> str:
         value = match.group("exact") or match.group("quoted") or match.group("word") or ""
-        canonical = canonical_severity(value, config)
+        canonical = _expandable_filter_severity(value, config)
         return severity_filter_clause(config, canonical) if canonical else match.group(0)
 
     head = in_pattern.sub(replace_values, head)
@@ -411,26 +441,26 @@ def expand_level_filters(query: str, config: dict[str, Any]) -> str:
 
 
 def _remove_simple_default_missing_filter(query: str, config: dict[str, Any]) -> tuple[str, str]:
-    """Move a simple default-missing level filter to a post-extraction pipe filter.
+    """Move simple level filters that need extracted values to post-pipe filters.
 
-    This intentionally handles the common UI/API form, such as ``level:info`` or
-    ``level:in("info","INFO")``. Mixed severity OR filters stay on the existing
-    structured expansion path so they do not accidentally become an AND filter.
+    This intentionally handles common UI/API forms, such as ``level:info`` or
+    ``level:verbose``. Mixed canonical/non-canonical OR filters stay on the
+    existing path so they do not accidentally become an AND filter.
     """
-    default_missing = severity_default_missing(config)
-    if not default_missing:
-        return query, ""
-
     head, pipes = _split_query_pipes(query)
     if not head:
         return query, ""
 
+    default_missing = severity_default_missing(config)
     canonical_field = re.escape(str(severity_config(config).get("canonicalField") or "level"))
-    filters: list[str] = []
+    post_filters: list[str] = []
 
     def all_default(values: str) -> bool:
         parsed = _parse_level_values(values)
-        return bool(parsed) and all(canonical_severity(value, config) == default_missing for value in parsed)
+        return bool(default_missing) and bool(parsed) and all(canonical_severity(value, config) == default_missing for value in parsed)
+
+    def all_exact(values: list[str]) -> bool:
+        return bool(values) and all(_expandable_filter_severity(value, config) is None for value in values)
 
     def is_negated(match: re.Match[str]) -> bool:
         return head[: match.start()].rstrip().lower().endswith("not")
@@ -445,27 +475,40 @@ def _remove_simple_default_missing_filter(query: str, config: dict[str, Any]) ->
     def replace_values(match: re.Match[str]) -> str:
         if is_negated(match):
             return match.group(0)
-        if not all_default(match.group("values")):
+        parsed = _parse_level_values(match.group("values"))
+        if all_default(match.group("values")) and default_missing:
+            clause = default_missing_level_filter_clause(config, default_missing)
+        elif all_exact(parsed):
+            clause = exact_level_filter_clause(config, parsed)
+        else:
             return match.group(0)
-        filters.append(default_missing)
-        return " "
+        if clause:
+            post_filters.append(clause)
+            return " "
+        return match.group(0)
 
     def replace_value(match: re.Match[str]) -> str:
         if is_negated(match):
             return match.group(0)
         value = match.group("exact") or match.group("quoted") or match.group("word") or ""
-        if canonical_severity(value, config) != default_missing:
+        if default_missing and canonical_severity(value, config) == default_missing:
+            clause = default_missing_level_filter_clause(config, default_missing)
+        elif _expandable_filter_severity(value, config) is None:
+            clause = exact_level_filter_clause(config, [value])
+        else:
             return match.group(0)
-        filters.append(default_missing)
-        return " "
+        if clause:
+            post_filters.append(clause)
+            return " "
+        return match.group(0)
 
     head = in_pattern.sub(replace_values, head)
     head = group_pattern.sub(replace_values, head)
     head = value_pattern.sub(replace_value, head)
-    if not filters:
+    if not post_filters:
         return query, ""
     head = re.sub(r"\s+", " ", head).strip() or "_time:15m"
-    post_filter = default_missing_level_filter_clause(config, default_missing)
+    post_filter = post_filters[0]
     return (f"{head} {pipes}".strip() if pipes else head), post_filter
 
 

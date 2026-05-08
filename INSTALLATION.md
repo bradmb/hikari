@@ -237,7 +237,7 @@ fieldMappings:
           - _msg:~'"level"[[:space:]]*:[[:space:]]*"(info|information|informational)'
           - _msg:~'^I[0-9]{4}'
         debug:
-          - _msg:~'"level"[[:space:]]*:[[:space:]]*"(debug|trace|verbose)'
+          - _msg:~'"level"[[:space:]]*:[[:space:]]*debug'
       numberRanges:
         debug: [1, 8]
         info: [9, 12]

@@ -2382,22 +2382,24 @@ function App() {
           )}
           <button className="add-button" onClick={runDraftQuery}>Add</button>
         </div>
-        {(appliedFilters.length > 0 || hasTimeWindow(timeWindow)) && (
-          <div className="active-filters query-active-filters" aria-label="Active filters">
-            {hasTimeWindow(timeWindow) && (
-              <button onClick={clearTimeWindow}>
-                <X size={12} />
-                <span>time:{formatTimeWindow(timeWindow)}</span>
-              </button>
-            )}
-            {appliedFilters.map((filter) => (
-              <button key={`${filter.exclude ? "not:" : ""}${filter.field}:${filter.value}`} className={filter.exclude ? "exclude" : ""} onClick={() => removeFilter(filter)}>
-                <X size={12} />
-                <span>{filter.exclude ? "not " : ""}{filter.field}:{filter.value}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div
+          className={`active-filters query-active-filters ${appliedFilters.length === 0 && !hasTimeWindow(timeWindow) ? "empty" : ""}`}
+          aria-label="Active filters"
+          aria-hidden={appliedFilters.length === 0 && !hasTimeWindow(timeWindow)}
+        >
+          {hasTimeWindow(timeWindow) && (
+            <button onClick={clearTimeWindow}>
+              <X size={12} />
+              <span>time:{formatTimeWindow(timeWindow)}</span>
+            </button>
+          )}
+          {appliedFilters.map((filter) => (
+            <button key={`${filter.exclude ? "not:" : ""}${filter.field}:${filter.value}`} className={filter.exclude ? "exclude" : ""} onClick={() => removeFilter(filter)}>
+              <X size={12} />
+              <span>{filter.exclude ? "not " : ""}{filter.field}:{filter.value}</span>
+            </button>
+          ))}
+        </div>
       </section>
 
       {!liveTailMode && (

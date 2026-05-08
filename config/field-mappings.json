@@ -57,7 +57,7 @@
       "error": ["_msg:~'\"level\"[[:space:]]*:[[:space:]]*\"(error|err|fatal|critical|crit|alert|emerg)'", "_msg:~'[[](emerg|alert|crit|critical|error|err)[]]'", "_msg:~'^E[0-9]{4}'", "_msg:~'^F[0-9]{4}'"],
       "warning": ["_msg:~'\"level\"[[:space:]]*:[[:space:]]*\"(warn|warning|notice)'", "_msg:~'[[](warn|warning|notice)[]]'", "_msg:~'^W[0-9]{4}'"],
       "info": ["_msg:~'\"level\"[[:space:]]*:[[:space:]]*\"(info|information|informational)'", "_msg:~'^I[0-9]{4}'"],
-      "debug": ["_msg:~'\"level\"[[:space:]]*:[[:space:]]*\"(debug|trace|verbose)'"]
+      "debug": ["_msg:~'\"level\"[[:space:]]*:[[:space:]]*\"debug'"]
     },
     "numberRanges": {
       "debug": [1, 8],
