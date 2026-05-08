@@ -376,14 +376,24 @@ def default_missing_level_filter_clause(config: dict[str, Any], canonical: str) 
 
 def exact_level_filter_clause(config: dict[str, Any], values: list[str]) -> str:
     """Build a post-pipe exact level filter for non-canonical facet values."""
-    field = str(severity_config(config).get("canonicalField") or "level")
     variants: list[str] = []
     for value in values:
         clean = value.strip()
         if not clean:
             continue
         variants.extend([clean, clean.lower(), clean.upper(), clean[:1].upper() + clean[1:].lower()])
-    return _field_filter(field, variants)
+    variants = list(dict.fromkeys(variants))
+    if not variants:
+        return ""
+
+    severity = severity_config(config)
+    canonical_field = str(severity.get("canonicalField") or "level")
+    fields = list(dict.fromkeys([canonical_field, *_string_list(severity.get("textFields"))]))
+    clauses = [_field_filter(field, variants) for field in fields]
+    clauses = [clause for clause in clauses if clause]
+    if not clauses:
+        return ""
+    return clauses[0] if len(clauses) == 1 else f"({' OR '.join(clauses)})"
 
 
 def _split_query_pipes(query: str) -> tuple[str, str]:

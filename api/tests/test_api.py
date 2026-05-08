@@ -435,12 +435,11 @@ def test_verbose_and_trace_level_filters_remain_exact_values():
     debug_query = with_copy_pipes('_time:15m level:debug', TEST_FIELD_MAPPINGS)
 
     assert 'level:="verbose"' not in verbose_query
-    assert '| filter level:in("verbose","VERBOSE","Verbose")' in verbose_query
-    assert "severity_text:in" not in verbose_query
+    assert '| filter (level:in("verbose","VERBOSE","Verbose") OR severity_text:in("verbose","VERBOSE","Verbose")' in verbose_query
+    assert "SeverityText:in" in verbose_query
     assert "severity_number:in" not in verbose_query
     assert "level:trace" not in trace_query
-    assert '| filter level:in("trace","TRACE","Trace")' in trace_query
-    assert "severity_text:in" not in trace_query
+    assert '| filter (level:in("trace","TRACE","Trace") OR severity_text:in("trace","TRACE","Trace")' in trace_query
     assert '"debug"' in debug_query
     assert '"verbose"' not in debug_query
     assert '"trace"' not in debug_query
