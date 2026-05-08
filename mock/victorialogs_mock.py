@@ -287,8 +287,10 @@ def _atoms_from_text(text: str) -> list[str]:
     atoms: list[str] = []
     atoms.extend(match.group(0) for match in re.finditer(r"[\w./-]+:in\([^)]*\)", text, re.IGNORECASE))
     atoms.extend(match.group(0) for match in re.finditer(r"[\w./-]+:~\"(?:\\.|[^\"])*\"", text, re.IGNORECASE))
+    atoms.extend(match.group(0) for match in re.finditer(r"[\w./-]+:~'(?:\\.|[^'])*'", text, re.IGNORECASE))
     without_complex = re.sub(r"[\w./-]+:in\([^)]*\)", " ", text, flags=re.IGNORECASE)
     without_complex = re.sub(r"[\w./-]+:~\"(?:\\.|[^\"])*\"", " ", without_complex, flags=re.IGNORECASE)
+    without_complex = re.sub(r"[\w./-]+:~'(?:\\.|[^'])*'", " ", without_complex, flags=re.IGNORECASE)
     atoms.extend(match.group(0) for match in re.finditer(r"[\w./-]+:=?\"?[^\"\s)]*\"?", without_complex, re.IGNORECASE))
     return [atom for atom in atoms if not atom.startswith("_time:")]
 
@@ -345,6 +347,9 @@ def _atom_matches(row: dict[str, Any], atom: str) -> bool:
     if in_match:
         return _field_matches(row, in_match.group(1), "in", in_match.group(2))
     regex_match = re.fullmatch(r"([\w./-]+):~\"((?:\\.|[^\"])*)\"", atom, re.IGNORECASE)
+    if regex_match:
+        return _field_matches(row, regex_match.group(1), "~", regex_match.group(2))
+    regex_match = re.fullmatch(r"([\w./-]+):~'((?:\\.|[^'])*)'", atom, re.IGNORECASE)
     if regex_match:
         return _field_matches(row, regex_match.group(1), "~", regex_match.group(2))
     field_match = re.fullmatch(r"([\w./-]+):=?\"?([^\"\s)]*)\"?", atom, re.IGNORECASE)

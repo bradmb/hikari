@@ -221,19 +221,19 @@ fieldMappings:
         debug: [debug, trace, verbose]
       messageFilters:
         error:
-          - _msg:~"\"level\"\s*:\s*\"(error|err|fatal|critical|crit|alert|emerg)\""
-          - _msg:~"\[(emerg|alert|crit|critical|error|err)\]"
-          - _msg:~"^E[0-9]{4}"
-          - _msg:~"^F[0-9]{4}"
+          - _msg:~'"level"[[:space:]]*:[[:space:]]*"(error|err|fatal|critical|crit|alert|emerg)'
+          - _msg:~'[[](emerg|alert|crit|critical|error|err)[]]'
+          - _msg:~'^E[0-9]{4}'
+          - _msg:~'^F[0-9]{4}'
         warning:
-          - _msg:~"\"level\"\s*:\s*\"(warn|warning|notice)\""
-          - _msg:~"\[(warn|warning|notice)\]"
-          - _msg:~"^W[0-9]{4}"
+          - _msg:~'"level"[[:space:]]*:[[:space:]]*"(warn|warning|notice)'
+          - _msg:~'[[](warn|warning|notice)[]]'
+          - _msg:~'^W[0-9]{4}'
         info:
-          - _msg:~"\"level\"\s*:\s*\"(info|information|informational)\""
-          - _msg:~"^I[0-9]{4}"
+          - _msg:~'"level"[[:space:]]*:[[:space:]]*"(info|information|informational)'
+          - _msg:~'^I[0-9]{4}'
         debug:
-          - _msg:~"\"level\"\s*:\s*\"(debug|trace|verbose)\""
+          - _msg:~'"level"[[:space:]]*:[[:space:]]*"(debug|trace|verbose)'
       numberRanges:
         debug: [1, 8]
         info: [9, 12]
@@ -241,8 +241,8 @@ fieldMappings:
         error: [17, 24]
       extractPipes:
         - unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields
-        - extract_regexp "^(?P<level>[IWEF])[0-9]{4}\s" keep_original_fields
-        - extract_regexp "\[(?P<level>emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)\]" keep_original_fields
+        - extract_regexp '^(?P<level>[IWEF])[0-9]{4}[[:space:]]' from _msg keep_original_fields
+        - extract_regexp '[[](?P<level>emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)[]]' from _msg keep_original_fields
     facets:
       - field: environment
         label: Environment
