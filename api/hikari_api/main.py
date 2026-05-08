@@ -15,8 +15,8 @@ from starlette.responses import StreamingResponse
 
 from .ai import generate_logsql
 from .field_mappings import (
-    SEVERITY_CANONICALS,
-    canonical_severity,
+    SEVERITY_DISPLAY_LEVELS,
+    display_severity,
     get_field_mappings,
     normalize_row_aliases,
     normalize_rows_aliases,
@@ -81,18 +81,18 @@ async def canonical_level_values(query: str, settings: Settings, vl: VictoriaLog
     field_mappings = get_field_mappings(settings)
     result = await vl.query(
         "/select/logsql/field_values",
-        {"query": with_copy_pipes(query, field_mappings), "field": "level", "limit": max(limit, len(SEVERITY_CANONICALS)), "start": start, "end": end},
+        {"query": with_copy_pipes(query, field_mappings), "field": "level", "limit": max(limit, len(SEVERITY_DISPLAY_LEVELS)), "start": start, "end": end},
     )
-    totals = {canonical: 0 for canonical in SEVERITY_CANONICALS}
+    totals = {level: 0 for level in SEVERITY_DISPLAY_LEVELS}
     for item in result.get("values", []) if isinstance(result, dict) else []:
         if not isinstance(item, dict):
             continue
         raw_value = item.get("value")
-        canonical = canonical_severity(raw_value, field_mappings)
-        if canonical is None and raw_value is not None and str(raw_value).strip() == "":
-            canonical = severity_default_missing(field_mappings)
-        if canonical:
-            totals[canonical] += int(item.get("hits") or 0)
+        level = display_severity(raw_value, field_mappings)
+        if level is None and raw_value is not None and str(raw_value).strip() == "":
+            level = severity_default_missing(field_mappings)
+        if level:
+            totals[level] = totals.get(level, 0) + int(item.get("hits") or 0)
     return [{"value": level, "hits": hits} for level, hits in totals.items() if hits][:limit]
 
 

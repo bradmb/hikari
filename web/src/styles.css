@@ -783,6 +783,12 @@ summary svg {
   background: var(--sev-info);
 }
 
+.facet-swatch.debug,
+.facet-swatch.trace,
+.facet-swatch.verbose {
+  background: var(--sev-debug);
+}
+
 .facet-list span {
   display: block;
   min-width: 0;

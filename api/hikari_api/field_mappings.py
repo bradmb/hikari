@@ -9,6 +9,8 @@ from typing import Any
 from .settings import Settings
 
 SEVERITY_CANONICALS: tuple[str, ...] = ("error", "warning", "info", "debug")
+DEBUG_SUBLEVELS: tuple[str, ...] = ("trace", "verbose")
+SEVERITY_DISPLAY_LEVELS: tuple[str, ...] = (*SEVERITY_CANONICALS, *DEBUG_SUBLEVELS)
 
 FALLBACK_FIELD_MAPPINGS: dict[str, Any] = {
     "defaultFields": ["service", "host", "level", "source", "status", "environment", "client"],
@@ -254,6 +256,17 @@ def canonical_severity(value: Any, config: dict[str, Any]) -> str | None:
         if lower in {item.lower() for item in _string_list(values.get(canonical))}:
             return canonical
     return None
+
+
+def display_severity(value: Any, config: dict[str, Any]) -> str | None:
+    """Map structured severity text values to the level value Hikari should display."""
+    text = str(value).strip()
+    if not text:
+        return None
+    lower = text.lower()
+    if lower in DEBUG_SUBLEVELS and canonical_severity(text, config) == "debug":
+        return lower
+    return canonical_severity(text, config)
 
 
 def _expandable_filter_severity(value: Any, config: dict[str, Any]) -> str | None:
@@ -585,11 +598,15 @@ def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[s
     normalized = dict(row)
     severity = severity_config(config)
     canonical_field = str(severity.get("canonicalField") or "level")
-    for source in _string_list(severity.get("textFields")):
-        canonical = canonical_severity(_row_value(normalized, source), config)
-        if canonical:
-            normalized[canonical_field] = canonical
-            break
+    text_levels = [
+        level
+        for source in _string_list(severity.get("textFields"))
+        if (level := display_severity(_row_value(normalized, source), config))
+    ]
+    if text_levels:
+        text_canonicals = {canonical_severity(level, config) for level in text_levels}
+        sublevel = next((level for level in text_levels if level in DEBUG_SUBLEVELS), None)
+        normalized[canonical_field] = sublevel if text_canonicals == {"debug"} and sublevel else text_levels[0]
     if _row_value(normalized, canonical_field) is None:
         for source in _string_list(severity.get("numberFields")):
             canonical = canonical_severity_number(_row_value(normalized, source), config)

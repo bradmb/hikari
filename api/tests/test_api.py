@@ -346,6 +346,42 @@ def test_level_field_values_fold_empty_bucket_into_default_missing_info():
     assert "unpack_json" in level_call["query"]
 
 
+def test_level_field_values_keep_debug_sublevels_distinct():
+    class LevelValuesClient(FakeVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            if path == "/select/logsql/field_values" and data["field"] == "level":
+                return {
+                    "values": [
+                        {"value": "debug", "hits": 4},
+                        {"value": "verbose", "hits": 7},
+                        {"value": "Verbose", "hits": 5},
+                        {"value": "trace", "hits": 2},
+                        {"value": "", "hits": 3},
+                    ]
+                }
+            return await super().query(path, data)
+
+    fake = LevelValuesClient()
+
+    def override_fake_client():
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    app.dependency_overrides[get_settings] = override_settings_default_missing_info
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/field-values", params={"query": "_time:15m", "field": "level"})
+
+    assert response.json()["values"] == [
+        {"value": "info", "hits": 3},
+        {"value": "debug", "hits": 4},
+        {"value": "trace", "hits": 2},
+        {"value": "verbose", "hits": 12},
+    ]
+
+
 def test_api_facets_apply_configured_copy_pipes():
     fake = FakeVictoriaLogsClient()
 
@@ -448,6 +484,10 @@ def test_verbose_and_trace_level_filters_remain_exact_values():
 def test_rows_normalize_structured_severity_text_and_number():
     assert normalize_row_aliases({"severity_text": "Error"}, TEST_FIELD_MAPPINGS)["level"] == "error"
     assert normalize_row_aliases({"severity_number": "13"}, TEST_FIELD_MAPPINGS)["level"] == "warning"
+    assert normalize_row_aliases({"level": "verbose"}, TEST_FIELD_MAPPINGS)["level"] == "verbose"
+    assert normalize_row_aliases({"severity_text": "Verbose"}, TEST_FIELD_MAPPINGS)["level"] == "verbose"
+    assert normalize_row_aliases({"level": "debug", "severity_text": "verbose"}, TEST_FIELD_MAPPINGS)["level"] == "verbose"
+    assert normalize_row_aliases({"severity_number": "1"}, TEST_FIELD_MAPPINGS)["level"] == "debug"
 
 
 def test_tail_errors_are_streamed_as_sse_error_events():

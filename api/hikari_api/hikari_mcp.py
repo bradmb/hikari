@@ -9,9 +9,9 @@ from mcp.server.transport_security import TransportSecuritySettings
 
 from .ai import generate_logsql
 from .field_mappings import (
-    SEVERITY_CANONICALS,
+    SEVERITY_DISPLAY_LEVELS,
     aliases_for,
-    canonical_severity,
+    display_severity,
     get_field_mappings,
     normalize_row_aliases,
     normalize_rows_aliases,
@@ -142,16 +142,16 @@ async def _canonical_level_values(query: str, limit: int, start: str | None = No
     client = _client()
     result = await client.query(
         "/select/logsql/field_values",
-        {"query": with_copy_pipes(query, config), "field": "level", "limit": max(limit, len(SEVERITY_CANONICALS)), "start": start, "end": end},
+        {"query": with_copy_pipes(query, config), "field": "level", "limit": max(limit, len(SEVERITY_DISPLAY_LEVELS)), "start": start, "end": end},
     )
-    totals = {canonical: 0 for canonical in SEVERITY_CANONICALS}
+    totals = {level: 0 for level in SEVERITY_DISPLAY_LEVELS}
     for item in _values(result):
         raw_value = item.get("value")
-        canonical = canonical_severity(raw_value, config)
-        if canonical is None and raw_value is not None and str(raw_value).strip() == "":
-            canonical = severity_default_missing(config)
-        if canonical:
-            totals[canonical] += int(item.get("hits") or 0)
+        level = display_severity(raw_value, config)
+        if level is None and raw_value is not None and str(raw_value).strip() == "":
+            level = severity_default_missing(config)
+        if level:
+            totals[level] = totals.get(level, 0) + int(item.get("hits") or 0)
     return [{"value": level, "hits": hits} for level, hits in totals.items() if hits][:limit]
 
 

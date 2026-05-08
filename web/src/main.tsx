@@ -712,6 +712,9 @@ function severityKey(level: string): "error" | "warning" | "info" | "debug" | "o
 }
 
 function levelLabel(level: string): string {
+  const c = canonicalLevel(level);
+  if (c === "trace") return "TRC";
+  if (c === "verbose") return "VRB";
   const k = severityKey(level);
   if (k === "error") return "ERR";
   if (k === "warning") return "WRN";
