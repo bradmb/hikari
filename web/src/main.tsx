@@ -921,6 +921,10 @@ function queryWithExpandedFilters(query: string, filters: AppliedFilter[]): stri
   return nextQuery;
 }
 
+function filtersForFacetField(filters: AppliedFilter[], field: string): AppliedFilter[] {
+  return filters.filter((filter) => filter.field !== field);
+}
+
 function mergeFacetValues(field: string, ...sets: Array<ValueHit[] | undefined>): ValueHit[] {
   const values = new Map<string, number>();
   sets.forEach((set) => {
@@ -1448,7 +1452,7 @@ function App() {
 
   async function loadFacetValues(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow): Promise<ValueHit[]> {
     const fieldsToLoad = aliasFieldsForFilter(field);
-    const backendQuery = queryWithExpandedFilters(baseQuery, filters);
+    const backendQuery = queryWithExpandedFilters(baseQuery, filtersForFacetField(filters, field));
     const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, window)));
     return mergeFacetValues(field, ...results.map((result) => result.values));
   }
@@ -1478,6 +1482,7 @@ function App() {
     const fieldsToLoad = Array.from(new Set(facetFields.flatMap((field) => aliasFieldsForFilter(field))));
 
     try {
+      if (filters.length > 0) throw new Error("Facet-specific filtering requires per-field facet queries.");
       const backendQuery = queryWithExpandedFilters(baseQuery, filters);
       const batch = normalizeFacetResponse(await getFacets(backendQuery, fieldsToLoad, 100, window));
       if (!isCurrentRun()) return;
