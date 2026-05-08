@@ -482,6 +482,11 @@ function message(row: LogRow): string {
 
 function levelFromMessageText(text: string): string {
   if (!text) return "";
+  const glogMatch = text.match(/^\s*([IWEF])\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+/);
+  if (glogMatch?.[1] === "I") return "info";
+  if (glogMatch?.[1] === "W") return "warning";
+  if (glogMatch?.[1] === "E") return "error";
+  if (glogMatch?.[1] === "F") return "fatal";
   const normalized = text.toLowerCase();
   if (/(^|[\s[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=/.test(normalized)) return "error";
   if (/(^|[\s[])(warning|warn)([\]\s:|,-]|$)|\swarning=/.test(normalized)) return "warning";
@@ -781,6 +786,11 @@ function quoteValue(value: string): string {
 
 /** Add a severity classifier clause used only for histogram level breakdown requests. */
 function queryWithLevelBucket(query: string, severity: HistogramSeverity): string {
+  return `${query.trim() || defaultLogQuery} (${levelSearchClauses(severity).join(" OR ")})`;
+}
+
+function levelSearchClauses(value: string): string[] {
+  const severity = severityKey(value);
   const variants: Record<HistogramSeverity, string[]> = {
     error: ["error", "Error", "ERROR", "err", "fatal", "critical"],
     warning: ["warning", "Warning", "WARN", "warn"],
@@ -788,20 +798,29 @@ function queryWithLevelBucket(query: string, severity: HistogramSeverity): strin
     debug: ["debug", "Debug", "DEBUG", "trace", "Trace", "verbose", "Verbose"]
   };
   const messageVariants: Record<HistogramSeverity, string[]> = {
-    error: ["[error]", "[err]", "[fatal]", "[critical]", " ERR ", " ERROR ", " ERROR:", " error=", " fatal ", " critical "],
-    warning: ["[warn]", "[warning]", " WARN ", " WARNING ", " WARNING:", " warning="],
-    info: ["[info]", "[information]", " INFO ", " INFO:"],
+    error: ["[error]", "[err]", "[fatal]", "[critical]", " ERR ", " ERROR ", " ERROR:", " error=", " fatal ", " critical ", "\"level\":\"error\"", "\"level\":\"fatal\"", "\"level\":\"critical\""],
+    warning: ["[warn]", "[warning]", " WARN ", " WARNING ", " WARNING:", " warning=", "\"level\":\"warn\"", "\"level\":\"warning\""],
+    info: ["[info]", "[information]", " INFO ", " INFO:", "\"level\":\"info\"", "\"level\":\"information\""],
     debug: ["[debug]", "[trace]", "[verbose]", " DEBUG ", " TRACE ", " VERBOSE "]
   };
+  const messageRegexes: Record<HistogramSeverity, string[]> = {
+    error: ["^[EF]\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}"],
+    warning: ["^W\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}"],
+    info: ["^I\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}"],
+    debug: []
+  };
+  if (severity === "other") return [filterToken("level", value)];
   const fields = Array.from(new Set([...aliasFieldsForFilter("level"), "level", "severity_text", "severity", "Level"]));
   const messageFields = ["_msg", "message", "msg", "log"];
-  const clauses = Array.from(
+  const wordClauses = messageVariants[severity].map((variant) => quoteValue(variant));
+  return Array.from(
     new Set([
       ...fields.flatMap((field) => variants[severity].map((value) => `${field}:${quoteValue(value)}`)),
-      ...messageFields.flatMap((field) => messageVariants[severity].map((value) => `${field}:${quoteValue(value)}`))
+      ...messageFields.flatMap((field) => messageVariants[severity].map((value) => `${field}:${quoteValue(value)}`)),
+      ...wordClauses,
+      ...messageFields.flatMap((field) => messageRegexes[severity].map((regex) => `${field}:~${quoteValue(regex)}`))
     ])
   );
-  return `${query.trim() || defaultLogQuery} (${clauses.join(" OR ")})`;
 }
 
 function canonicalLevel(value: string): string {
@@ -853,7 +872,7 @@ function expandedFilterToken(field: string, value: string): string {
   const cleanValue = value.trim();
   if (!field || !cleanValue) return "";
   if (field === "level") {
-    return `(${levelVariants(cleanValue).map((variant) => `${field}:=${quoteValue(variant)}`).join(" OR ")})`;
+    return `(${levelSearchClauses(cleanValue).join(" OR ")})`;
   }
   const fields = aliasFieldsForFilter(field);
   if (fields.length > 1) {
@@ -885,7 +904,7 @@ function expandedFilterTokenForValues(field: string, values: string[]): string {
   if (cleanValues.length === 1) return expandedFilterToken(field, cleanValues[0]);
   const tokens = cleanValues.map((value) => {
     if (field === "level") {
-      return levelVariants(value).map((variant) => `${field}:=${quoteValue(variant)}`);
+      return levelSearchClauses(value);
     }
     return aliasFieldsForFilter(field).map((alias) => `${alias}:=${quoteValue(value)}`);
   }).flat();

@@ -197,7 +197,11 @@ def _level_from_message(row: dict[str, Any]) -> str | None:
         payload_level = _level_from_payload(value)
         if payload_level:
             return payload_level
-        text = str(value).lower()
+        raw_text = str(value)
+        glog_match = re.match(r"^\s*([IWEF])\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+", raw_text)
+        if glog_match:
+            return {"I": "info", "W": "warning", "E": "error", "F": "fatal"}[glog_match.group(1)]
+        text = raw_text.lower()
         if re.search(r"(^|[\s\[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=", text):
             return "error"
         if re.search(r"(^|[\s\[])(warning|warn)([\]\s:|,-]|$)|\swarning=", text):

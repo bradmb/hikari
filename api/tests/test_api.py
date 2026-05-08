@@ -261,6 +261,35 @@ def test_search_derives_level_from_json_message_payload():
     assert row["level"] == "error"
 
 
+def test_search_derives_level_from_kubernetes_glog_prefix():
+    class GlogLevelClient(FakeVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            return {
+                "rows": [
+                    {
+                        "_time": "2026-05-08T00:45:33Z",
+                        "_msg": "W0508 00:45:33.309809       1 reflector.go:569] failed to list snapshots",
+                        "service": "storage-controller",
+                    }
+                ]
+            }
+
+    fake = GlogLevelClient()
+
+    def override_fake_client():
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
+
+    row = response.json()["rows"][0]
+    assert row["level"] == "warning"
+
+
 def test_hits_facets_and_field_values():
     with TestClient(app) as test_client:
         hits = test_client.post("/api/hits", json={"query": "_time:15m", "step": "1m"})
