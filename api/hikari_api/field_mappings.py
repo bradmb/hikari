@@ -158,11 +158,45 @@ def _row_value(row: dict[str, Any], field: str) -> Any:
     return None
 
 
+def _canonical_level(value: Any) -> str | None:
+    normalized = str(value).strip().lower()
+    if normalized in {"fatal", "critical", "err", "error"}:
+        return "error"
+    if normalized in {"warn", "warning"}:
+        return "warning"
+    if normalized in {"info", "information"}:
+        return "info"
+    if normalized in {"debug", "trace", "verbose"}:
+        return normalized
+    return normalized or None
+
+
+def _level_from_payload(value: Any) -> str | None:
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw.startswith("{"):
+            return None
+        try:
+            value = json.loads(raw)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(value, dict):
+        return None
+    for field in ("level", "Level", "severity", "severity_text", "severityText", "level_name", "levelName"):
+        candidate = _row_value(value, field)
+        if candidate is not None:
+            return _canonical_level(candidate)
+    return None
+
+
 def _level_from_message(row: dict[str, Any]) -> str | None:
-    for field in ("message", "msg", "_msg", "log"):
+    for field in ("_msg", "message", "msg", "log"):
         value = _row_value(row, field)
         if value is None:
             continue
+        payload_level = _level_from_payload(value)
+        if payload_level:
+            return payload_level
         text = str(value).lower()
         if re.search(r"(^|[\s\[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=", text):
             return "error"

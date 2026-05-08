@@ -463,6 +463,11 @@ function messageFromPayload(payload: Record<string, unknown> | null): string {
   return asText(payload.msg ?? payload.message ?? payload.Message ?? payload.State ?? payload.state ?? payload.event);
 }
 
+function levelFromPayload(payload: Record<string, unknown> | null): string {
+  if (!payload) return "";
+  return canonicalLevel(asText(payload.level ?? payload.Level ?? payload.severity ?? payload.severity_text ?? payload.severityText ?? payload.level_name ?? payload.levelName));
+}
+
 function message(row: LogRow): string {
   const candidates = [row.message, row.msg, row._msg, row.log];
   for (const candidate of candidates) {
@@ -482,6 +487,19 @@ function levelFromMessageText(text: string): string {
   if (/(^|[\s[])(warning|warn)([\]\s:|,-]|$)|\swarning=/.test(normalized)) return "warning";
   if (/(^|[\s[])(debug|trace|verbose)([\]\s:|,-]|$)/.test(normalized)) return "debug";
   if (/(^|[\s[])(info|information)([\]\s:|,-]|$)/.test(normalized)) return "info";
+  return "";
+}
+
+function levelFromMessageFields(row: LogRow): string {
+  const candidates = [row._msg, row.message, row.msg, row.log];
+  for (const candidate of candidates) {
+    const raw = asText(candidate);
+    if (!raw) continue;
+    const nested = levelFromPayload(parseJsonPayload(raw));
+    if (nested) return nested;
+    const textLevel = levelFromMessageText(raw);
+    if (textLevel) return textLevel;
+  }
   return "";
 }
 
@@ -731,7 +749,7 @@ function levelLabel(level: string): string {
 }
 
 function levelValue(row: LogRow): string {
-  return firstFieldValue(row, aliasFieldsForFilter("level")) || levelFromMessageText(message(row)) || "unknown";
+  return firstFieldValue(row, aliasFieldsForFilter("level")) || levelFromMessageFields(row) || "unknown";
 }
 
 function fieldValue(row: LogRow, field: string): string {

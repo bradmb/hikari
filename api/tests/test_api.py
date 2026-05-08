@@ -231,6 +231,36 @@ def test_search_derives_level_from_message_when_structured_level_is_missing():
     assert row["level"] == "error"
 
 
+def test_search_derives_level_from_json_message_payload():
+    class JsonMessageLevelClient(FakeVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            return {
+                "rows": [
+                    {
+                        "_time": "2026-05-08T00:25:26Z",
+                        "_msg": '{"level":"error","ts":"2026-05-08T00:25:26Z","msg":"failed to process environ"}',
+                        "message": "failed to process environ",
+                        "service": "node-monitor",
+                    }
+                ]
+            }
+
+    fake = JsonMessageLevelClient()
+
+    def override_fake_client():
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
+
+    row = response.json()["rows"][0]
+    assert row["level"] == "error"
+
+
 def test_hits_facets_and_field_values():
     with TestClient(app) as test_client:
         hits = test_client.post("/api/hits", json={"query": "_time:15m", "step": "1m"})
