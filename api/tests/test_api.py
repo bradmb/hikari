@@ -372,14 +372,24 @@ def test_level_field_values_keep_debug_sublevels_distinct():
     app.dependency_overrides[client] = override_fake_client
     app.dependency_overrides[get_settings] = override_settings_default_missing_info
     with TestClient(app) as test_client:
-        response = test_client.get("/api/field-values", params={"query": "_time:15m", "field": "level"})
+        response = test_client.get("/api/field-values", params={"query": "_time:15m level:debug", "field": "level"})
+        facets = test_client.post("/api/facets", json={"query": "_time:15m level:debug", "fields": ["level"]})
 
-    assert response.json()["values"] == [
+    expected_values = [
         {"value": "info", "hits": 3},
         {"value": "debug", "hits": 4},
         {"value": "trace", "hits": 2},
         {"value": "verbose", "hits": 12},
     ]
+    assert response.json()["values"] == expected_values
+    assert facets.json()["facets"] == [{"field": "level", "values": expected_values}]
+    level_calls = [data for path, data in fake.calls if path == "/select/logsql/field_values" and data["field"] == "level"]
+    assert len(level_calls) == 2
+    for level_call in level_calls:
+        assert "level:debug" not in level_call["query"]
+        assert "severity_number:in" in level_call["query"]
+        assert " NOT " in level_call["query"]
+        assert 'level:in("trace","TRACE","Trace","verbose","VERBOSE","Verbose")' in level_call["query"]
 
 
 def test_api_facets_apply_configured_copy_pipes():
@@ -476,9 +486,11 @@ def test_verbose_and_trace_level_filters_remain_exact_values():
     assert "severity_number:in" not in verbose_query
     assert "level:trace" not in trace_query
     assert '| filter (level:in("trace","TRACE","Trace") OR severity_text:in("trace","TRACE","Trace")' in trace_query
+    assert "level:debug" not in debug_query
     assert '"debug"' in debug_query
-    assert '"verbose"' not in debug_query
-    assert '"trace"' not in debug_query
+    assert "severity_number:in" in debug_query
+    assert " NOT " in debug_query
+    assert 'level:in("trace","TRACE","Trace","verbose","VERBOSE","Verbose")' in debug_query
 
 
 def test_rows_normalize_structured_severity_text_and_number():

@@ -409,6 +409,23 @@ def exact_level_filter_clause(config: dict[str, Any], values: list[str]) -> str:
     return clauses[0] if len(clauses) == 1 else f"({' OR '.join(clauses)})"
 
 
+def exact_debug_filter_clause(config: dict[str, Any]) -> str:
+    """Build a post-pipe debug filter that excludes explicit debug sublevels."""
+    severity = severity_config(config)
+    positive_clauses = [exact_level_filter_clause(config, ["debug"])]
+    positive_clauses.extend(
+        _field_filter(field, severity_numbers_for(config, "debug"))
+        for field in _string_list(severity.get("numberFields"))
+    )
+    positive_clauses = [clause for clause in positive_clauses if clause]
+    if not positive_clauses:
+        return ""
+
+    negative_clause = exact_level_filter_clause(config, list(DEBUG_SUBLEVELS))
+    positive = positive_clauses[0] if len(positive_clauses) == 1 else f"({' OR '.join(positive_clauses)})"
+    return f"{positive} NOT {negative_clause}" if negative_clause else positive
+
+
 def _split_query_pipes(query: str) -> tuple[str, str]:
     quote: str | None = None
     for index, ch in enumerate(query):
@@ -485,6 +502,9 @@ def _remove_simple_default_missing_filter(query: str, config: dict[str, Any]) ->
     def all_exact(values: list[str]) -> bool:
         return bool(values) and all(_expandable_filter_severity(value, config) is None for value in values)
 
+    def all_debug(values: list[str]) -> bool:
+        return bool(values) and all(str(value).strip().lower() == "debug" for value in values)
+
     def is_negated(match: re.Match[str]) -> bool:
         return head[: match.start()].rstrip().lower().endswith("not")
 
@@ -501,6 +521,8 @@ def _remove_simple_default_missing_filter(query: str, config: dict[str, Any]) ->
         parsed = _parse_level_values(match.group("values"))
         if all_default(match.group("values")) and default_missing:
             clause = default_missing_level_filter_clause(config, default_missing)
+        elif all_debug(parsed):
+            clause = exact_debug_filter_clause(config)
         elif all_exact(parsed):
             clause = exact_level_filter_clause(config, parsed)
         else:
@@ -516,6 +538,8 @@ def _remove_simple_default_missing_filter(query: str, config: dict[str, Any]) ->
         value = match.group("exact") or match.group("quoted") or match.group("word") or ""
         if default_missing and canonical_severity(value, config) == default_missing:
             clause = default_missing_level_filter_clause(config, default_missing)
+        elif str(value).strip().lower() == "debug":
+            clause = exact_debug_filter_clause(config)
         elif _expandable_filter_severity(value, config) is None:
             clause = exact_level_filter_clause(config, [value])
         else:
