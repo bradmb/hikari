@@ -38,9 +38,26 @@
     ],
     "host": ["host", "hostname", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
     "hostname": ["hostname", "host", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
-    "level": ["level"],
+    "level": ["level", "severity_text", "SeverityText", "severity", "Severity", "severityText", "level_name", "levelName"],
     "kubernetes.pod_namespace": ["kubernetes.pod_namespace", "namespace"],
     "kubernetes.pod_name": ["kubernetes.pod_name", "pod"]
+  },
+  "severity": {
+    "canonicalField": "level",
+    "textFields": ["level", "severity_text", "SeverityText", "severity", "Severity", "severityText", "level_name", "levelName"],
+    "numberFields": ["severity_number", "SeverityNumber", "severityNumber"],
+    "values": {
+      "error": ["error", "err", "fatal", "critical"],
+      "warning": ["warning", "warn"],
+      "info": ["info", "information", "informational"],
+      "debug": ["debug", "trace", "verbose"]
+    },
+    "numberRanges": {
+      "debug": [1, 8],
+      "info": [9, 12],
+      "warning": [13, 16],
+      "error": [17, 24]
+    }
   },
   "facets": [
     { "field": "environment", "label": "Environment" },

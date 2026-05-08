@@ -8,7 +8,16 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 
 from .ai import generate_logsql
-from .field_mappings import aliases_for, get_field_mappings, normalize_row_aliases, normalize_rows_aliases, summary_facets, with_copy_pipes
+from .field_mappings import (
+    SEVERITY_CANONICALS,
+    aliases_for,
+    get_field_mappings,
+    normalize_row_aliases,
+    normalize_rows_aliases,
+    summary_facets,
+    with_copy_pipes,
+    with_severity_filter,
+)
 from .models import AiQueryRequest
 from .settings import Settings, get_settings
 from .victorialogs import VictoriaLogsClient
@@ -125,6 +134,30 @@ def _merge_values(*sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if current is None or int(hits or 0) > int(current.get("hits", 0) or 0):
                 merged[value] = {**item, "value": value, "hits": hits}
     return sorted(merged.values(), key=lambda item: (-int(item.get("hits", 0) or 0), str(item.get("value", ""))))
+
+
+def _hit_count(result: Any) -> int:
+    total = 0
+    for item in _values(result):
+        value = item.get("hits", item.get("count", item.get("logs", 0)))
+        try:
+            total += int(value or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+async def _canonical_level_values(query: str, limit: int, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
+    config = _field_mappings()
+    values: list[dict[str, Any]] = []
+    client = _client()
+    for canonical in SEVERITY_CANONICALS:
+        severity_query = with_copy_pipes(with_severity_filter(query, canonical, config), config)
+        result = await client.query("/select/logsql/hits", {"query": severity_query, "step": "1m", "start": start, "end": end})
+        hits = _hit_count(result)
+        if hits:
+            values.append({"value": canonical, "hits": hits})
+    return values[:limit]
 
 
 def _summary_field_keys(fields: list[str] | None) -> list[str]:
@@ -336,6 +369,8 @@ async def get_field_values(
     filter: str | None = None,
 ) -> dict[str, Any]:
     bounded_limit = _bounded(limit, 25, MAX_FIELD_VALUE_LIMIT)
+    if field == "level":
+        return {"values": await _canonical_level_values(query, bounded_limit, start, end)}
     return await _client().query(
         "/select/logsql/field_values",
         {"query": _mapped_query(query), "field": field, "limit": bounded_limit, "start": start, "end": end, "filter": filter},
@@ -384,6 +419,8 @@ async def summarize_window(
     async def load_facet(key: str) -> tuple[str, dict[str, Any]]:
         spec = _summary_spec(key, config)
         field = spec["field"]
+        if field == "level":
+            return key, {"label": spec["label"], "field": field, "sources": [field, *spec.get("fallback_fields", [])], "values": await _canonical_level_values(query, bounded_limit, start, end)}
         sources = [field, *spec.get("fallback_fields", [])]
         value_sets = await asyncio.gather(*(load_values(source) for source in sources))
         values = _merge_values(*value_sets)[:bounded_limit]
@@ -410,9 +447,21 @@ async def get_facets(
 ) -> dict[str, Any]:
     """Return facets for requested fields, defaulting to the same summary fields as Hikari."""
     bounded_limit = _bounded(limit, 20, MAX_FIELD_VALUE_LIMIT)
+    facet_fields = _facet_fields(fields)
+    if "level" in facet_fields:
+        non_level_fields = [field for field in facet_fields if field != "level"]
+        facets: list[dict[str, Any]] = []
+        if non_level_fields:
+            result = await _client().query(
+                "/select/logsql/facets",
+                {"query": _mapped_query(query), "field": non_level_fields, "limit": bounded_limit, "start": start, "end": end},
+            )
+            facets.extend(result.get("facets", []) if isinstance(result, dict) else [])
+        facets.append({"field": "level", "values": await _canonical_level_values(query, bounded_limit, start, end)})
+        return {"facets": facets}
     return await _client().query(
         "/select/logsql/facets",
-        {"query": _mapped_query(query), "field": _facet_fields(fields), "limit": bounded_limit, "start": start, "end": end},
+        {"query": _mapped_query(query), "field": facet_fields, "limit": bounded_limit, "start": start, "end": end},
     )
 
 

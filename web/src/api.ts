@@ -52,6 +52,13 @@ export type FieldMappingFacet = {
 export type FieldMappings = {
   defaultFields: string[];
   aliases: Record<string, string[]>;
+  severity?: {
+    canonicalField?: string;
+    textFields?: string[];
+    numberFields?: string[];
+    values?: Record<string, string[]>;
+    numberRanges?: Record<string, [number, number]>;
+  };
   facets: FieldMappingFacet[];
 };
 

@@ -73,11 +73,12 @@ Field and facet mappings live in `config/field-mappings.json`. Use this file to 
 
 - `defaultFields` controls the fields shown first in selectors and discovery.
 - `aliases` maps stored source fields into canonical fields such as `service`, `host`, and `level`.
+- `severity` maps structured severity fields such as `severity_text` and `severity_number` into Hikari's canonical `level`.
 - `facets` controls the left sidebar facet groups and MCP summary facets.
 
 For example, `service.name` and `service_name` can both populate the canonical `service` facet, while `host.name` and `host_name` can populate `host`. Hikari applies those aliases to backend VictoriaLogs requests with hidden LogsQL `copy` pipes, so users still see clean queries like `_time:15m service:="api"`.
 
-Hikari does not derive canonical fields from message text at read time. If `level`, `service`, or `host` is embedded inside `_msg`, JSON payloads, or access-log text, normalize those fields in your collector or application before writing to VictoriaLogs.
+Hikari also emulates the VictoriaLogs Grafana plugin's structured severity handling for its own UI, API, AI, and MCP tools. A clean query like `_time:15m level:="error"` is expanded server-side across configured structured severity fields. Hikari does not derive canonical fields from message text at read time. If `level`, `service`, or `host` is embedded only inside `_msg`, JSON payload strings, or access-log text, normalize those fields in your collector or application before writing to VictoriaLogs.
 
 The Helm chart can mount this configuration from `fieldMappings.config` as `/app/config/field-mappings.json`. See `INSTALLATION.md` for the full mapping format and Kubernetes values example.
 

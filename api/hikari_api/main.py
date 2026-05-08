@@ -14,7 +14,14 @@ from starlette.responses import Response
 from starlette.responses import StreamingResponse
 
 from .ai import generate_logsql
-from .field_mappings import get_field_mappings, normalize_row_aliases, normalize_rows_aliases, with_copy_pipes
+from .field_mappings import (
+    SEVERITY_CANONICALS,
+    get_field_mappings,
+    normalize_row_aliases,
+    normalize_rows_aliases,
+    with_copy_pipes,
+    with_severity_filter,
+)
 from .hikari_mcp import hikari_mcp_app
 from .models import AiQueryRequest, FacetsRequest, FieldValuesRequest, HitsRequest, SearchRequest, SearchResponse
 from .settings import Settings, get_settings
@@ -68,6 +75,33 @@ def ai_enabled(settings: Settings) -> bool:
     return bool(settings.openai_api_key)
 
 
+def _hit_count(result: Any) -> int:
+    values = result.get("values", []) if isinstance(result, dict) else []
+    total = 0
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        value = item.get("hits", item.get("count", item.get("logs", 0)))
+        try:
+            total += int(value or 0)
+        except (TypeError, ValueError):
+            pass
+    return total
+
+
+async def canonical_level_values(query: str, settings: Settings, vl: VictoriaLogsClient, limit: int, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
+    """Return canonical level counts by asking VictoriaLogs to count each structured severity group."""
+    field_mappings = get_field_mappings(settings)
+    values: list[dict[str, Any]] = []
+    for canonical in SEVERITY_CANONICALS:
+        severity_query = with_copy_pipes(with_severity_filter(query, canonical, field_mappings), field_mappings)
+        result = await vl.query("/select/logsql/hits", {"query": severity_query, "step": "1m", "start": start, "end": end})
+        hits = _hit_count(result)
+        if hits:
+            values.append({"value": canonical, "hits": hits})
+    return values[:limit]
+
+
 @app.get("/health")
 def health(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     return {
@@ -109,6 +143,19 @@ async def hits(request: HitsRequest, settings: Settings = Depends(get_settings),
 @app.post("/api/facets")
 async def facets(request: FacetsRequest, settings: Settings = Depends(get_settings), vl: VictoriaLogsClient = Depends(client)) -> Any:
     data = request.model_dump()
+    requested_fields = list(data.get("fields") or [])
+    if "level" in requested_fields:
+        non_level_fields = [field for field in requested_fields if field != "level"]
+        response_facets: list[dict[str, Any]] = []
+        if non_level_fields:
+            non_level_data = {**data, "query": mapped_query(request.query, settings), "field": non_level_fields}
+            non_level_data.pop("fields", None)
+            result = await vl.query("/select/logsql/facets", non_level_data)
+            response_facets.extend(result.get("facets", []) if isinstance(result, dict) else [])
+        level_values = await canonical_level_values(request.query, settings, vl, data.get("limit", 20), request.start, request.end)
+        response_facets.append({"field": "level", "values": level_values})
+        return {"facets": response_facets}
+
     data["query"] = mapped_query(request.query, settings)
     if data["fields"]:
         data["field"] = data.pop("fields")
@@ -137,6 +184,8 @@ async def field_values(
     settings: Settings = Depends(get_settings),
     vl: VictoriaLogsClient = Depends(client),
 ) -> Any:
+    if field == "level":
+        return {"values": await canonical_level_values(query, settings, vl, limit, start, end)}
     request = FieldValuesRequest(query=mapped_query(query, settings), field=field, start=start, end=end, filter=filter, limit=limit)
     return await vl.query("/select/logsql/field_values", request.model_dump())
 

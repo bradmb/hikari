@@ -758,19 +758,8 @@ function queryWithLevelBucket(query: string, severity: HistogramSeverity): strin
 
 function levelSearchClauses(value: string): string[] {
   const severity = severityKey(value);
-  const variants: Record<HistogramSeverity, string[]> = {
-    error: ["error", "Error", "ERROR", "err", "fatal", "critical"],
-    warning: ["warning", "Warning", "WARN", "warn"],
-    info: ["info", "Info", "INFO", "information", "Information"],
-    debug: ["debug", "Debug", "DEBUG", "trace", "Trace", "verbose", "Verbose"]
-  };
   if (severity === "other") return [filterToken("level", value)];
-  const fields = Array.from(new Set([...aliasFieldsForFilter("level"), "level"]));
-  return Array.from(
-    new Set([
-      ...fields.flatMap((field) => variants[severity].map((value) => `${field}:${quoteValue(value)}`))
-    ])
-  );
+  return [filterToken("level", severity)];
 }
 
 function canonicalLevel(value: string): string {
@@ -822,7 +811,7 @@ function expandedFilterToken(field: string, value: string): string {
   const cleanValue = value.trim();
   if (!field || !cleanValue) return "";
   if (field === "level") {
-    return `(${levelSearchClauses(cleanValue).join(" OR ")})`;
+    return filterToken("level", displayFacetValue("level", cleanValue));
   }
   const fields = aliasFieldsForFilter(field);
   if (fields.length > 1) {
@@ -854,7 +843,7 @@ function expandedFilterTokenForValues(field: string, values: string[]): string {
   if (cleanValues.length === 1) return expandedFilterToken(field, cleanValues[0]);
   const tokens = cleanValues.map((value) => {
     if (field === "level") {
-      return levelSearchClauses(value);
+      return [filterToken("level", displayFacetValue("level", value))];
     }
     return aliasFieldsForFilter(field).map((alias) => `${alias}:=${quoteValue(value)}`);
   }).flat();
