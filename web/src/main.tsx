@@ -925,6 +925,12 @@ function filtersForFacetField(filters: AppliedFilter[], field: string): AppliedF
   return filters.filter((filter) => filter.field !== field);
 }
 
+function queryForFacetField(query: string, filters: AppliedFilter[], field: string): string {
+  const ownFilters = filters.filter((filter) => filter.field === field);
+  const baseQuery = ownFilters.length > 0 ? stripAppliedFilterTokens(query, ownFilters) : query;
+  return queryWithExpandedFilters(baseQuery, filtersForFacetField(filters, field));
+}
+
 function mergeFacetValues(field: string, ...sets: Array<ValueHit[] | undefined>): ValueHit[] {
   const values = new Map<string, number>();
   sets.forEach((set) => {
@@ -1452,7 +1458,7 @@ function App() {
 
   async function loadFacetValues(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow): Promise<ValueHit[]> {
     const fieldsToLoad = aliasFieldsForFilter(field);
-    const backendQuery = queryWithExpandedFilters(baseQuery, filtersForFacetField(filters, field));
+    const backendQuery = queryForFacetField(baseQuery, filters, field);
     const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, window)));
     return mergeFacetValues(field, ...results.map((result) => result.values));
   }
