@@ -61,7 +61,7 @@ Common environment variables:
 - `HIKARI_OPENAI_MODEL`: model used for natural-language query generation.
 - `HIKARI_MCP_ALLOWED_HOSTS`: optional comma-separated Host header allowlist for MCP DNS rebinding protection.
 
-AWS Secrets Manager variants are supported for deployments that load secrets at runtime:
+Optional AWS Secrets Manager integration is available for AWS deployments that prefer loading secrets at runtime. Hikari does not require AWS; non-AWS installs should inject the direct environment variables above, or use their platform's native secret injection.
 
 - `HIKARI_VICTORIA_BEARER_TOKEN_SECRET_ID`
 - `HIKARI_VICTORIA_HEADERS_SECRET_ID`

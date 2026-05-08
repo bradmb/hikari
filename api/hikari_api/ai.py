@@ -50,7 +50,7 @@ LEVEL_ALIASES = {
 async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: VictoriaLogsClient | None = None) -> AiQueryResponse:
     """Generate or refine LogsQL from natural language using observed VictoriaLogs context."""
     if not settings.openai_api_key:
-        raise HTTPException(status_code=503, detail="OPENAI_API_KEY or HIKARI_OPENAI_API_KEY_SECRET_ID is required")
+        raise HTTPException(status_code=503, detail="OPENAI_API_KEY is required for AI search")
 
     discovery = await _discover_log_context(settings, request, vl)
     schema = {

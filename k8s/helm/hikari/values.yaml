@@ -20,11 +20,11 @@ deployment:
 podAnnotations: {}
 
 env:
-  awsRegion: us-east-1
+  awsRegion: ""
   victoriaUrl: http://victorialogs.example.svc:9428
   fieldMappingsFile: /app/config/field-mappings.json
   facetPreviewLimit: 10
-  openAiSecretId: kubernetes/hikari/openai
+  openAiSecretId: ""
   openAiSecretName: ""
   openAiSecretKey: OPENAI_API_KEY
   openAiModel: gpt-5.4-mini

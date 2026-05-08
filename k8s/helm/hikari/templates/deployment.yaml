@@ -42,8 +42,10 @@ spec:
               containerPort: 8000
               protocol: TCP
           env:
+            {{- if .Values.env.openAiSecretId }}
             - name: AWS_REGION
-              value: {{ .Values.env.awsRegion | quote }}
+              value: {{ .Values.env.awsRegion | default "us-east-1" | quote }}
+            {{- end }}
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
             - name: HIKARI_VICTORIA_URL
@@ -59,8 +61,10 @@ spec:
                   name: {{ .Values.env.openAiSecretName | quote }}
                   key: {{ .Values.env.openAiSecretKey | quote }}
             {{- end }}
+            {{- if .Values.env.openAiSecretId }}
             - name: HIKARI_OPENAI_API_KEY_SECRET_ID
               value: {{ .Values.env.openAiSecretId | quote }}
+            {{- end }}
             - name: HIKARI_OPENAI_MODEL
               value: {{ .Values.env.openAiModel | quote }}
             - name: HIKARI_MCP_ALLOWED_HOSTS

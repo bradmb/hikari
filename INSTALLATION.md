@@ -339,6 +339,8 @@ HIKARI_OPENAI_MODEL=gpt-5.4-mini
 
 Without `OPENAI_API_KEY`, the regular log explorer and MCP non-AI tools can still run.
 
+In Kubernetes and other orchestrators, prefer injecting `OPENAI_API_KEY` from the platform's native secret mechanism. Hikari is not tied to AWS.
+
 If your MCP endpoint is exposed through a reverse proxy and you want MCP host
 header validation, set the public host names:
 
@@ -412,7 +414,14 @@ helm upgrade --install hikari ./k8s/helm/hikari `
   --set env.victoriaUrl=http://victorialogs.example.svc:9428
 ```
 
-If you use AWS Secrets Manager for the OpenAI key, set:
+To inject the key from a Kubernetes Secret, set:
+
+```powershell
+--set env.openAiSecretName=hikari-openai `
+--set env.openAiSecretKey=OPENAI_API_KEY
+```
+
+If you specifically use AWS Secrets Manager for the OpenAI key, set:
 
 ```powershell
 --set env.openAiSecretId=kubernetes/hikari/openai
@@ -444,5 +453,5 @@ Hikari is a Python/FastAPI application packaged as a container. Deploy it on a c
 - `GET /health` should return the active VictoriaLogs URL and default query.
 - If searches fail, confirm `HIKARI_VICTORIA_URL` is reachable from the API container or pod.
 - If MCP clients cannot fetch capabilities, confirm they are using HTTP transport and the `/mcp` URL.
-- If AI search fails, confirm `OPENAI_API_KEY` or `HIKARI_OPENAI_API_KEY_SECRET_ID` is configured.
+- If AI search fails, confirm `OPENAI_API_KEY` is configured, or that the optional AWS Secrets Manager ID resolves to a key.
 - If deployed publicly, confirm your access layer forwards required MCP headers and does not block POST requests to `/mcp`.

@@ -694,6 +694,17 @@ h1 {
   line-height: 1.15;
 }
 
+.docs-section .code-sample {
+  margin: 20px 0 24px;
+}
+
+.docs-section .code-sample + p,
+.docs-section .code-sample + ul,
+.docs-section .code-sample + ol,
+.docs-section .reference-table + p {
+  margin-top: 18px;
+}
+
 .docs-section ol,
 .docs-section ul {
   margin: 0;

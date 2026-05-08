@@ -111,8 +111,8 @@ docker compose up mock-victorialogs api web</code></pre>
               <div role="row"><code>HIKARI_FIELD_MAPPINGS_FILE</code><span>JSON file that defines canonical fields, facet aliases, and sidebar facets.</span></div>
               <div role="row"><code>HIKARI_FIELD_MAPPINGS</code><span>Optional inline JSON override for field mappings.</span></div>
               <div role="row"><code>HIKARI_FACET_PREVIEW_LIMIT</code><span>Number of values shown per facet before the <code>View more</code> expander appears. Defaults to <code>10</code>.</span></div>
-              <div role="row"><code>OPENAI_API_KEY</code><span>Optional key for natural-language query generation.</span></div>
-              <div role="row"><code>HIKARI_OPENAI_API_KEY_SECRET_ID</code><span>Optional secret ID for loading the OpenAI API key at runtime.</span></div>
+              <div role="row"><code>OPENAI_API_KEY</code><span>Optional key for natural-language query generation. Inject this directly from your platform's secret mechanism.</span></div>
+              <div role="row"><code>HIKARI_OPENAI_API_KEY_SECRET_ID</code><span>Optional AWS Secrets Manager secret ID for AWS deployments that load the OpenAI key at runtime.</span></div>
               <div role="row"><code>HIKARI_OPENAI_MODEL</code><span>Model used for natural-language query generation.</span></div>
             </div>
           </section>
@@ -312,6 +312,15 @@ kubectl -n victorialogs rollout status daemonset/victorialogs-collector-fluent-b
   --set image.repository=ghcr.io/bradmb/hikari `
   --set-string image.tag=latest `
   --set env.victoriaUrl=http://victorialogs.example.svc:9428</code></pre>
+            <p>
+              Optional AI search only needs <code>OPENAI_API_KEY</code>. In Kubernetes, inject it from a
+              Kubernetes Secret or your platform's native secret mechanism. AWS Secrets Manager is supported
+              as an opt-in integration, but it is not required.
+            </p>
+            <pre class="code-sample"><code>helm upgrade --install hikari ./k8s/helm/hikari `
+  --namespace hikari `
+  --set env.openAiSecretName=hikari-openai `
+  --set env.openAiSecretKey=OPENAI_API_KEY</code></pre>
             <p>Verify the rollout and health endpoint.</p>
             <pre class="code-sample"><code>kubectl -n hikari rollout status deployment/hikari
 kubectl -n hikari port-forward deployment/hikari 8000:8000
@@ -351,7 +360,7 @@ curl http://localhost:8000/health</code></pre>
               <li>Confirm the API container or pod can reach <code>HIKARI_VICTORIA_URL</code>.</li>
               <li>If a host or service is missing from facets, add its source field to <code>aliases</code> in the field mapping config.</li>
               <li>For MCP capability failures, use HTTP transport and <code>/mcp</code>.</li>
-              <li>AI features are hidden unless <code>OPENAI_API_KEY</code> or <code>HIKARI_OPENAI_API_KEY_SECRET_ID</code> resolves to a key.</li>
+              <li>AI features are hidden unless <code>OPENAI_API_KEY</code> is configured, or the optional AWS Secrets Manager ID resolves to a key.</li>
             </ul>
           </section>
         </main>
