@@ -16,11 +16,11 @@ from starlette.responses import StreamingResponse
 from .ai import generate_logsql
 from .field_mappings import (
     SEVERITY_CANONICALS,
+    canonical_severity,
     get_field_mappings,
     normalize_row_aliases,
     normalize_rows_aliases,
     with_copy_pipes,
-    with_severity_filter,
 )
 from .hikari_mcp import hikari_mcp_app
 from .models import AiQueryRequest, FacetsRequest, FieldValuesRequest, HitsRequest, SearchRequest, SearchResponse
@@ -75,31 +75,37 @@ def ai_enabled(settings: Settings) -> bool:
     return bool(settings.openai_api_key)
 
 
-def _hit_count(result: Any) -> int:
-    values = result.get("values", []) if isinstance(result, dict) else []
-    total = 0
-    for item in values:
+async def canonical_level_values(query: str, settings: Settings, vl: VictoriaLogsClient, limit: int, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
+    """Return canonical level counts from VictoriaLogs field values after query-time normalization pipes."""
+    field_mappings = get_field_mappings(settings)
+    result = await vl.query(
+        "/select/logsql/field_values",
+        {"query": with_copy_pipes(query, field_mappings), "field": "level", "limit": max(limit, len(SEVERITY_CANONICALS)), "start": start, "end": end},
+    )
+    totals = {canonical: 0 for canonical in SEVERITY_CANONICALS}
+    for item in result.get("values", []) if isinstance(result, dict) else []:
         if not isinstance(item, dict):
             continue
-        value = item.get("hits", item.get("count", item.get("logs", 0)))
-        try:
-            total += int(value or 0)
-        except (TypeError, ValueError):
-            pass
-    return total
+        canonical = canonical_severity(item.get("value"), field_mappings)
+        if canonical:
+            totals[canonical] += int(item.get("hits") or 0)
+    return [{"value": level, "hits": hits} for level, hits in totals.items() if hits][:limit]
 
 
-async def canonical_level_values(query: str, settings: Settings, vl: VictoriaLogsClient, limit: int, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
-    """Return canonical level counts by asking VictoriaLogs to count each structured severity group."""
-    field_mappings = get_field_mappings(settings)
-    values: list[dict[str, Any]] = []
-    for canonical in SEVERITY_CANONICALS:
-        severity_query = with_copy_pipes(with_severity_filter(query, canonical, field_mappings), field_mappings)
-        result = await vl.query("/select/logsql/hits", {"query": severity_query, "step": "1m", "start": start, "end": end})
-        hits = _hit_count(result)
-        if hits:
-            values.append({"value": canonical, "hits": hits})
-    return values[:limit]
+def _facets_from_result(result: Any) -> list[dict[str, Any]]:
+    """Normalize VictoriaLogs facet response variants into the UI/API shape."""
+    if not isinstance(result, dict):
+        return []
+    if isinstance(result.get("facets"), list):
+        return result["facets"]
+    values = result.get("values")
+    if isinstance(values, dict):
+        return [
+            {"field": field, "values": value}
+            for field, value in values.items()
+            if isinstance(value, list)
+        ]
+    return []
 
 
 @app.get("/health")
@@ -151,7 +157,7 @@ async def facets(request: FacetsRequest, settings: Settings = Depends(get_settin
             non_level_data = {**data, "query": mapped_query(request.query, settings), "field": non_level_fields}
             non_level_data.pop("fields", None)
             result = await vl.query("/select/logsql/facets", non_level_data)
-            response_facets.extend(result.get("facets", []) if isinstance(result, dict) else [])
+            response_facets.extend(_facets_from_result(result))
         level_values = await canonical_level_values(request.query, settings, vl, data.get("limit", 20), request.start, request.end)
         response_facets.append({"field": "level", "values": level_values})
         return {"facets": response_facets}

@@ -11,12 +11,12 @@ from .ai import generate_logsql
 from .field_mappings import (
     SEVERITY_CANONICALS,
     aliases_for,
+    canonical_severity,
     get_field_mappings,
     normalize_row_aliases,
     normalize_rows_aliases,
     summary_facets,
     with_copy_pipes,
-    with_severity_filter,
 )
 from .models import AiQueryRequest
 from .settings import Settings, get_settings
@@ -136,28 +136,19 @@ def _merge_values(*sets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(merged.values(), key=lambda item: (-int(item.get("hits", 0) or 0), str(item.get("value", ""))))
 
 
-def _hit_count(result: Any) -> int:
-    total = 0
-    for item in _values(result):
-        value = item.get("hits", item.get("count", item.get("logs", 0)))
-        try:
-            total += int(value or 0)
-        except (TypeError, ValueError):
-            pass
-    return total
-
-
 async def _canonical_level_values(query: str, limit: int, start: str | None = None, end: str | None = None) -> list[dict[str, Any]]:
     config = _field_mappings()
-    values: list[dict[str, Any]] = []
     client = _client()
-    for canonical in SEVERITY_CANONICALS:
-        severity_query = with_copy_pipes(with_severity_filter(query, canonical, config), config)
-        result = await client.query("/select/logsql/hits", {"query": severity_query, "step": "1m", "start": start, "end": end})
-        hits = _hit_count(result)
-        if hits:
-            values.append({"value": canonical, "hits": hits})
-    return values[:limit]
+    result = await client.query(
+        "/select/logsql/field_values",
+        {"query": with_copy_pipes(query, config), "field": "level", "limit": max(limit, len(SEVERITY_CANONICALS)), "start": start, "end": end},
+    )
+    totals = {canonical: 0 for canonical in SEVERITY_CANONICALS}
+    for item in _values(result):
+        canonical = canonical_severity(item.get("value"), config)
+        if canonical:
+            totals[canonical] += int(item.get("hits") or 0)
+    return [{"value": level, "hits": hits} for level, hits in totals.items() if hits][:limit]
 
 
 def _summary_field_keys(fields: list[str] | None) -> list[str]:

@@ -78,7 +78,7 @@ Field and facet mappings live in `config/field-mappings.json`. Use this file to 
 
 For example, `service.name` and `service_name` can both populate the canonical `service` facet, while `host.name` and `host_name` can populate `host`. Hikari applies those aliases to backend VictoriaLogs requests with hidden LogsQL `copy` pipes, so users still see clean queries like `_time:15m service:="api"`.
 
-Hikari also emulates the VictoriaLogs Grafana plugin's structured severity handling for its own UI, API, AI, and MCP tools. A clean query like `_time:15m level:="error"` is expanded server-side across configured structured severity fields. Hikari does not derive canonical fields from message text at read time. If `level`, `service`, or `host` is embedded only inside `_msg`, JSON payload strings, or access-log text, normalize those fields in your collector or application before writing to VictoriaLogs.
+Hikari also emulates the VictoriaLogs Grafana plugin's severity handling for its own UI, API, AI, and MCP tools. A clean query like `_time:15m level:="error"` is expanded server-side across configured structured severity fields and optional `_msg` filters. For rows and field values, Hikari can append configurable VictoriaLogs `unpack_json` and `extract_regexp` pipes so VictoriaLogs extracts common message-only levels before returning data. Prefer ingestion-time normalization for high-volume streams, but the query-time mapping keeps mixed schemas usable.
 
 The Helm chart can mount this configuration from `fieldMappings.config` as `/app/config/field-mappings.json`. See `INSTALLATION.md` for the full mapping format and Kubernetes values example.
 

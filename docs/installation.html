@@ -146,11 +146,11 @@ docker compose up mock-victorialogs api web</code></pre>
               live tail data, AI context, and MCP results.
             </p>
             <p>
-              Hikari expects canonical facet values to exist as stored VictoriaLogs fields. It does not derive
-              <code>service</code> or <code>host</code> from <code>_msg</code>, JSON payload text, or access-log
-              strings at read time. For severity, Hikari maps structured fields such as <code>severity_text</code>,
-              <code>SeverityText</code>, and OpenTelemetry <code>severity_number</code> into the canonical
-              <code>level</code> field for its UI, API, MCP tools, and AI context.
+              Hikari expects canonical facet values to exist as stored VictoriaLogs fields. For severity, Hikari
+              maps structured fields such as <code>severity_text</code>, <code>SeverityText</code>, and
+              OpenTelemetry <code>severity_number</code> into the canonical <code>level</code> field. It can also
+              append configurable VictoriaLogs <code>unpack_json</code> and <code>extract_regexp</code> pipes for
+              common message-only level formats. Prefer ingestion-time normalization for high-volume streams.
             </p>
             <p>Use <code>facets</code> to choose the canonical groups shown in the sidebar and MCP summaries.</p>
             <pre class="code-sample"><code>{
@@ -218,15 +218,34 @@ docker compose up mock-victorialogs api web</code></pre>
         - severity_number
         - SeverityNumber
       values:
-        error: [error, err, fatal, critical]
-        warning: [warning, warn]
-        info: [info, information, informational]
+        error: [error, err, fatal, critical, crit, alert, emerg, e, f]
+        warning: [warning, warn, notice, w]
+        info: [info, information, informational, i]
         debug: [debug, trace, verbose]
+      messageFilters:
+        error:
+          - _msg:~"\"level\"\s*:\s*\"(error|err|fatal|critical|crit|alert|emerg)\""
+          - _msg:~"\[(emerg|alert|crit|critical|error|err)\]"
+          - _msg:~"^E[0-9]{4}"
+          - _msg:~"^F[0-9]{4}"
+        warning:
+          - _msg:~"\"level\"\s*:\s*\"(warn|warning|notice)\""
+          - _msg:~"\[(warn|warning|notice)\]"
+          - _msg:~"^W[0-9]{4}"
+        info:
+          - _msg:~"\"level\"\s*:\s*\"(info|information|informational)\""
+          - _msg:~"^I[0-9]{4}"
+        debug:
+          - _msg:~"\"level\"\s*:\s*\"(debug|trace|verbose)\""
       numberRanges:
         debug: [1, 8]
         info: [9, 12]
         warning: [13, 16]
         error: [17, 24]
+      extractPipes:
+        - unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields
+        - extract_regexp "^(?P&lt;level&gt;[IWEF])[0-9]{4}\s" keep_original_fields
+        - extract_regexp "\[(?P&lt;level&gt;emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)\]" keep_original_fields
     facets:
       - field: environment
         label: Environment
@@ -257,18 +276,21 @@ docker compose up mock-victorialogs api web</code></pre>
   --set env.victoriaUrl=http://victorialogs.example.svc:9428</code></pre>
             <h3>Why am I not seeing levels?</h3>
             <p>
-              Hikari reads <code>level</code> as its canonical severity field and can map structured source fields
-              like <code>severity_text</code> and <code>severity_number</code>. If rows show <code>unknown</code>
-              or appear to have the wrong level, first inspect the fields stored in VictoriaLogs.
+              Hikari reads <code>level</code> as its canonical severity field. It can map structured source fields
+              like <code>severity_text</code> and <code>severity_number</code>, and it can run configured
+              VictoriaLogs extraction pipes for common <code>_msg</code> formats. If rows show
+              <code>unknown</code> or appear to have the wrong level, first inspect the fields stored in
+              VictoriaLogs and the mapping file mounted into Hikari.
             </p>
             <pre class="code-sample"><code>_time:15m | limit 1
 _time:15m level:*
 _time:15m severity_text:*
 _time:15m severity_number:*</code></pre>
             <p>
-              If the level only appears inside <code>_msg</code> or another message payload, update the collector
-              or application logger to emit a structured severity field before ingestion. For Kubernetes collectors,
-              check the Fluent Bit ConfigMaps and restart the DaemonSet after changing normalization.
+              If the level only appears inside <code>_msg</code> or another message payload, add a matching
+              <code>severity.extractPipes</code> entry or update the collector/application logger to emit a
+              structured severity field before ingestion. For Kubernetes collectors, check the Fluent Bit
+              ConfigMaps and restart the DaemonSet after changing normalization.
             </p>
             <pre class="code-sample"><code>kubectl -n victorialogs get configmap victorialogs-collector-fluent-bit -o yaml
 kubectl -n victorialogs get configmap fluentbit-lua-scripts -o yaml

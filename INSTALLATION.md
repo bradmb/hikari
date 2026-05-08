@@ -141,10 +141,11 @@ Do not add these copy pipes manually to user-facing saved queries. Configure the
 facet aliases once and let Hikari add them consistently.
 
 Hikari expects canonical facet values to come from structured VictoriaLogs fields. It maps structured
-severity fields to the canonical `level` field in the same spirit as the VictoriaLogs Grafana plugin, but it
-does not derive `service`, `host`, or severity from `_msg`, JSON payload text, or access-log strings at read
-time. Normalize message-only values in your collector or application before shipping logs to VictoriaLogs.
-This keeps queries, facets, histograms, MCP tools, and AI context fast because VictoriaLogs can do the work directly.
+severity fields to the canonical `level` field in the same spirit as the VictoriaLogs Grafana plugin. For
+common message-only severity formats, Hikari can also append configurable VictoriaLogs `unpack_json` and
+`extract_regexp` pipes so VictoriaLogs performs the extraction before returning rows, field values, facets,
+histograms, MCP data, and AI context. Prefer normalizing at ingestion when possible; query-time extraction is
+best used as compatibility for mixed or older log streams.
 
 Use `facets` to choose the canonical fields shown in the left sidebar and MCP summary output:
 
@@ -214,15 +215,34 @@ fieldMappings:
         - severity_number
         - SeverityNumber
       values:
-        error: [error, err, fatal, critical]
-        warning: [warning, warn]
-        info: [info, information, informational]
+        error: [error, err, fatal, critical, crit, alert, emerg, e, f]
+        warning: [warning, warn, notice, w]
+        info: [info, information, informational, i]
         debug: [debug, trace, verbose]
+      messageFilters:
+        error:
+          - _msg:~"\"level\"\s*:\s*\"(error|err|fatal|critical|crit|alert|emerg)\""
+          - _msg:~"\[(emerg|alert|crit|critical|error|err)\]"
+          - _msg:~"^E[0-9]{4}"
+          - _msg:~"^F[0-9]{4}"
+        warning:
+          - _msg:~"\"level\"\s*:\s*\"(warn|warning|notice)\""
+          - _msg:~"\[(warn|warning|notice)\]"
+          - _msg:~"^W[0-9]{4}"
+        info:
+          - _msg:~"\"level\"\s*:\s*\"(info|information|informational)\""
+          - _msg:~"^I[0-9]{4}"
+        debug:
+          - _msg:~"\"level\"\s*:\s*\"(debug|trace|verbose)\""
       numberRanges:
         debug: [1, 8]
         info: [9, 12]
         warning: [13, 16]
         error: [17, 24]
+      extractPipes:
+        - unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields
+        - extract_regexp "^(?P<level>[IWEF])[0-9]{4}\s" keep_original_fields
+        - extract_regexp "\[(?P<level>emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)\]" keep_original_fields
     facets:
       - field: environment
         label: Environment
@@ -262,9 +282,11 @@ For non-Helm deployments, set `HIKARI_FIELD_MAPPINGS_FILE` to a mounted JSON fil
 
 ## Troubleshooting: Why am I not seeing levels?
 
-Hikari treats `level` as its canonical severity field, but it can map structured source fields such as
+Hikari treats `level` as its canonical severity field. It can map structured source fields such as
 `severity_text`, `SeverityText`, `severity`, and OpenTelemetry `severity_number` into that canonical value.
-If every row shows `unknown` or appears to have the wrong level, check the structured fields stored in VictoriaLogs.
+It can also run configured VictoriaLogs `extractPipes` to extract common `_msg` formats such as JSON logs,
+Kubernetes `W0508...` prefixes, and Nginx-style `[warn]` text. If every row shows `unknown` or appears to
+have the wrong level, check what VictoriaLogs actually stored and which mapping file Hikari mounted.
 
 1. Query a recent row and inspect the top-level fields:
 
@@ -283,8 +305,9 @@ _time:15m severity_number:*
 3. If your logs use a structured field not listed in `severity.textFields` or `severity.numberFields`, add it
 to your field mapping config and redeploy Hikari.
 
-4. If your logs only contain levels inside `_msg` or another message field, update your collector or app
-logger to emit a structured severity field before ingestion.
+4. If your logs only contain levels inside `_msg` or another message field, either add a matching
+`severity.extractPipes` entry or update your collector/application logger to emit a structured severity
+field before ingestion. Ingestion-time normalization is faster and more precise for high-volume streams.
 
 5. For Kubernetes collector deployments, inspect the collector ConfigMap and rollout after changing the
 normalization script:

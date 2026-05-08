@@ -23,10 +23,30 @@ FALLBACK_FIELD_MAPPINGS: dict[str, Any] = {
         "textFields": ["level", "severity_text", "SeverityText", "severity", "Severity", "severityText", "level_name", "levelName"],
         "numberFields": ["severity_number", "SeverityNumber", "severityNumber"],
         "values": {
-            "error": ["error", "err", "fatal", "critical"],
-            "warning": ["warning", "warn"],
-            "info": ["info", "information", "informational"],
+            "error": ["error", "err", "fatal", "critical", "crit", "alert", "emerg", "e", "f"],
+            "warning": ["warning", "warn", "notice", "w"],
+            "info": ["info", "information", "informational", "i"],
             "debug": ["debug", "trace", "verbose"],
+        },
+        "messageFilters": {
+            "error": [
+                "_msg:~\"\\\"level\\\"\\s*:\\s*\\\"(error|err|fatal|critical|crit|alert|emerg)\\\"\"",
+                "_msg:~\"\\[(emerg|alert|crit|critical|error|err)\\]\"",
+                "_msg:~\"^E[0-9]{4}\"",
+                "_msg:~\"^F[0-9]{4}\"",
+            ],
+            "warning": [
+                "_msg:~\"\\\"level\\\"\\s*:\\s*\\\"(warn|warning|notice)\\\"\"",
+                "_msg:~\"\\[(warn|warning|notice)\\]\"",
+                "_msg:~\"^W[0-9]{4}\"",
+            ],
+            "info": [
+                "_msg:~\"\\\"level\\\"\\s*:\\s*\\\"(info|information|informational)\\\"\"",
+                "_msg:~\"^I[0-9]{4}\"",
+            ],
+            "debug": [
+                "_msg:~\"\\\"level\\\"\\s*:\\s*\\\"(debug|trace|verbose)\\\"\"",
+            ],
         },
         "numberRanges": {
             "debug": [1, 8],
@@ -34,6 +54,11 @@ FALLBACK_FIELD_MAPPINGS: dict[str, Any] = {
             "warning": [13, 16],
             "error": [17, 24],
         },
+        "extractPipes": [
+            "unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields",
+            "extract_regexp \"^(?P<level>[IWEF])[0-9]{4}\\s\" keep_original_fields",
+            "extract_regexp \"\\[(?P<level>emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)\\]\" keep_original_fields",
+        ],
     },
     "facets": [
         {"field": "environment", "label": "Environment"},
@@ -125,6 +150,18 @@ def _normalize(config: dict[str, Any]) -> dict[str, Any]:
                 values = _string_list(override["values"].get(canonical_name))
                 values_config[canonical_name] = values or severity["values"].get(canonical_name, [])
             severity["values"] = values_config
+        if isinstance(override.get("messageFilters"), dict):
+            filters_config: dict[str, list[str]] = {}
+            current_filters = severity.get("messageFilters", {})
+            if not isinstance(current_filters, dict):
+                current_filters = {}
+            for canonical_name in SEVERITY_CANONICALS:
+                values = _string_list(override["messageFilters"].get(canonical_name))
+                filters_config[canonical_name] = values or _string_list(current_filters.get(canonical_name))
+            severity["messageFilters"] = filters_config
+        values = _string_list(override.get("extractPipes"))
+        if values:
+            severity["extractPipes"] = values
         if isinstance(override.get("numberRanges"), dict):
             ranges = dict(severity["numberRanges"])
             for canonical_name in SEVERITY_CANONICALS:
@@ -245,11 +282,22 @@ def severity_numbers_for(config: dict[str, Any], canonical: str) -> list[str]:
     return [str(value) for value in range(start, end + 1)]
 
 
+def severity_message_filters_for(config: dict[str, Any], canonical: str) -> list[str]:
+    filters = severity_config(config).get("messageFilters", {})
+    if not isinstance(filters, dict):
+        return []
+    return _string_list(filters.get(canonical))
+
+
+def severity_extract_pipes(config: dict[str, Any]) -> list[str]:
+    return _string_list(severity_config(config).get("extractPipes"))
+
+
 def _field_filter(field: str, values: list[str]) -> str:
     unique = list(dict.fromkeys(value for value in values if value))
     if not unique:
         return ""
-    quoted = ", ".join(json.dumps(value) for value in unique)
+    quoted = ",".join(json.dumps(value) for value in unique)
     return f"{field}:in({quoted})"
 
 
@@ -266,6 +314,7 @@ def severity_filter_clause(config: dict[str, Any], canonical: str) -> str:
         _field_filter(field, number_values)
         for field in _string_list(severity.get("numberFields"))
     )
+    clauses.extend(severity_message_filters_for(config, canonical))
     clauses = [clause for clause in clauses if clause]
     if not clauses:
         return ""
@@ -358,7 +407,11 @@ def with_copy_pipes(query: str, config: dict[str, Any]) -> str:
         clean_query = "_time:15m"
     clean_query = expand_level_filters(clean_query, config)
     existing = clean_query.lower()
-    pipes = [pipe for pipe in copy_pipes_for(config) if f"| {pipe}".lower() not in existing]
+    pipes = [
+        pipe
+        for pipe in [*severity_extract_pipes(config), *copy_pipes_for(config)]
+        if f"| {pipe}".lower() not in existing
+    ]
     if not pipes:
         return clean_query
     return f"{clean_query} | {' | '.join(pipes)}"

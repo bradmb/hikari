@@ -65,10 +65,16 @@ TEST_FIELD_MAPPINGS = {
         "textFields": ["level", "severity_text", "SeverityText", "severity", "Severity"],
         "numberFields": ["severity_number", "SeverityNumber"],
         "values": {
-            "error": ["error", "err", "fatal", "critical"],
-            "warning": ["warning", "warn"],
-            "info": ["info", "information", "informational"],
+            "error": ["error", "err", "fatal", "critical", "crit", "alert", "emerg", "e", "f"],
+            "warning": ["warning", "warn", "notice", "w"],
+            "info": ["info", "information", "informational", "i"],
             "debug": ["debug", "trace", "verbose"],
+        },
+        "messageFilters": {
+            "error": ['_msg:~"\\"level\\"\\s*:\\s*\\"(error|err|fatal|critical|crit|alert|emerg)\\""', '_msg:~"\\[(emerg|alert|crit|critical|error|err)\\]"', '_msg:~"^E[0-9]{4}"', '_msg:~"^F[0-9]{4}"'],
+            "warning": ['_msg:~"\\"level\\"\\s*:\\s*\\"(warn|warning|notice)\\""', '_msg:~"\\[(warn|warning|notice)\\]"', '_msg:~"^W[0-9]{4}"'],
+            "info": ['_msg:~"\\"level\\"\\s*:\\s*\\"(info|information|informational)\\""', '_msg:~"^I[0-9]{4}"'],
+            "debug": ['_msg:~"\\"level\\"\\s*:\\s*\\"(debug|trace|verbose)\\""'],
         },
         "numberRanges": {
             "debug": [1, 8],
@@ -76,6 +82,11 @@ TEST_FIELD_MAPPINGS = {
             "warning": [13, 16],
             "error": [17, 24],
         },
+        "extractPipes": [
+            "unpack_json fields (level,severity,severity_text,severity_number,msg,message) keep_original_fields",
+            'extract_regexp "^(?P<level>[IWEF])[0-9]{4}\\s" keep_original_fields',
+            'extract_regexp "\\[(?P<level>emerg|alert|crit|critical|error|err|warn|warning|notice|info|debug|trace)\\]" keep_original_fields',
+        ],
     },
     "facets": [
         {"field": "environment", "label": "Environment"},
@@ -177,7 +188,7 @@ def test_search_sends_limit_as_api_parameter():
     assert payload["start"] is None
     assert payload["end"] is None
     assert payload["limit"] == 100
-    assert payload["query"].startswith("_time:15m | copy")
+    assert payload["query"].startswith("_time:15m | unpack_json")
     assert "copy service.name as service" in payload["query"]
     assert "copy host_name as host" in payload["query"]
 
@@ -283,6 +294,8 @@ def test_config_reports_ai_disabled_without_openai_key():
 
 def test_configured_facet_aliases_copy_host_and_service_names():
     query = with_copy_pipes("_time:15m", TEST_FIELD_MAPPINGS)
+    assert "unpack_json" in query
+    assert "extract_regexp" in query
     assert "copy service_name as service" in query
     assert "copy host_name as host" in query
     assert "copy severity_text as level" in query
@@ -293,6 +306,7 @@ def test_level_filters_expand_to_structured_severity_fields():
     assert "level:in" in query
     assert "severity_text:in" in query
     assert "severity_number:in" in query
+    assert "_msg:~" in query
     assert '"Error"' in query
     assert '"17"' in query
 
@@ -748,7 +762,8 @@ async def test_mcp_get_facets_defaults_to_summary_fields(monkeypatch):
 
     facets_call = next(data for path, data in fake.calls if path == "/select/logsql/facets")
     assert facets_call["field"] == ["service", "host", "kubernetes.pod_namespace", "kubernetes.pod_name"]
-    assert any(path == "/select/logsql/hits" and "severity_text:in" in data["query"] for path, data in fake.calls)
+    level_call = next(data for path, data in fake.calls if path == "/select/logsql/field_values" and data["field"] == "level")
+    assert "unpack_json" in level_call["query"]
 
 
 @pytest.mark.anyio
