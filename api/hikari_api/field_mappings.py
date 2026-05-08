@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -157,6 +158,23 @@ def _row_value(row: dict[str, Any], field: str) -> Any:
     return None
 
 
+def _level_from_message(row: dict[str, Any]) -> str | None:
+    for field in ("message", "msg", "_msg", "log"):
+        value = _row_value(row, field)
+        if value is None:
+            continue
+        text = str(value).lower()
+        if re.search(r"(^|[\s\[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=", text):
+            return "error"
+        if re.search(r"(^|[\s\[])(warning|warn)([\]\s:|,-]|$)|\swarning=", text):
+            return "warning"
+        if re.search(r"(^|[\s\[])(debug|trace|verbose)([\]\s:|,-]|$)", text):
+            return "debug"
+        if re.search(r"(^|[\s\[])(info|information)([\]\s:|,-]|$)", text):
+            return "info"
+    return None
+
+
 def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[str, Any]:
     """Populate missing canonical row fields from their configured alias sources."""
     normalized = dict(row)
@@ -173,6 +191,10 @@ def normalize_row_aliases(row: dict[str, Any], config: dict[str, Any]) -> dict[s
             if value is not None:
                 normalized[target_field] = value
                 break
+    if _row_value(normalized, "level") is None:
+        inferred_level = _level_from_message(normalized)
+        if inferred_level:
+            normalized["level"] = inferred_level
     return normalized
 
 

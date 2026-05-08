@@ -317,15 +317,20 @@ function emptySeverityCounts(): SeverityCounts {
   return { error: 0, warning: 0, info: 0, debug: 0, other: 0 };
 }
 
+function severityCountsFromRows(rows: LogRow[]): SeverityCounts {
+  const counts = emptySeverityCounts();
+  rows.forEach((row) => {
+    counts[severityKey(levelValue(row))] += 1;
+  });
+  return counts;
+}
+
 function deriveMood(rows: LogRow[]): Mood {
   if (rows.length < 5) {
     return { hue: 188, saturation: 48, intensity: 0.35, label: "calm" };
   }
   const total = rows.length;
-  const counts = emptySeverityCounts();
-  rows.forEach((row) => {
-    counts[severityKey(levelValue(row))] += 1;
-  });
+  const counts = severityCountsFromRows(rows);
   const errorRate = counts.error / total;
   const warningRate = counts.warning / total;
 
@@ -1864,6 +1869,20 @@ function App() {
     histogramLevelHits.info.forEach((hit) => addHit(hit, infos));
     histogramLevelHits.debug.forEach((hit) => addHit(hit, debugs));
 
+    const hasSeverityHits = [...errors, ...warnings, ...infos, ...debugs].some((count) => count > 0);
+    if (!hasSeverityHits) {
+      rows.forEach((row) => {
+        const t = rowTimestamp(row);
+        if (Number.isNaN(t)) return;
+        const idx = Math.min(bucketCount - 1, Math.max(0, Math.floor((t - minTime) / step)));
+        const severity = severityKey(levelValue(row));
+        if (severity === "error") errors[idx] += 1;
+        if (severity === "warning") warnings[idx] += 1;
+        if (severity === "info") infos[idx] += 1;
+        if (severity === "debug") debugs[idx] += 1;
+      });
+    }
+
     const maxTotal = Math.max(1, ...totals);
     const buckets = totals.map((total, i) => {
       const height = total === 0 ? 0 : Math.max(3, Math.round((total / maxTotal) * 72));
@@ -1890,7 +1909,7 @@ function App() {
       };
     });
     return { buckets, maxTotal };
-  }, [hits, histogramLevelHits, hitRange, hitStepMs]);
+  }, [hits, histogramLevelHits, hitRange, hitStepMs, rows]);
 
   const selectedHistogramRange = dragRange && histogram.buckets.length
     ? {
@@ -2180,17 +2199,18 @@ function App() {
 
   const severityStats = useMemo<SeverityStats>(() => {
     const counts = emptySeverityCounts();
+    const rowCounts = severityCountsFromRows(rows);
     const levelFacet = facets.level;
     if (levelFacet && levelFacet.length > 0) {
       levelFacet.forEach((item) => {
         counts[severityKey(item.value)] += item.hits;
       });
+      (Object.keys(counts) as Array<keyof SeverityCounts>).forEach((key) => {
+        counts[key] = Math.max(counts[key], rowCounts[key]);
+      });
       return { counts, classifiedTotal: levelFacet.reduce((sum, item) => sum + item.hits, 0), source: "facet" };
     }
-    rows.forEach((row) => {
-      counts[severityKey(levelValue(row))] += 1;
-    });
-    return { counts, classifiedTotal: rows.length, source: "rows" };
+    return { counts: rowCounts, classifiedTotal: rows.length, source: "rows" };
   }, [rows, facets]);
   const severityCounts = severityStats.counts;
   const unclassifiedSeverityCount = Math.max(0, totalLogs - severityStats.classifiedTotal);
