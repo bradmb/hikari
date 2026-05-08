@@ -1514,10 +1514,34 @@ function App() {
   }
 
   async function loadFacetValues(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow): Promise<ValueHit[]> {
+    const derivedValues = await loadDerivedFacetValues(field, baseQuery, filters, window);
+    if (derivedValues.length > 0) return derivedValues;
     const fieldsToLoad = aliasFieldsForFilter(field);
     const backendQuery = queryWithExpandedFilters(baseQuery, filters);
     const results = await Promise.all(fieldsToLoad.map((sourceField) => getFieldValues(backendQuery, sourceField, window)));
     return mergeFacetValues(field, ...results.map((result) => result.values));
+  }
+
+  async function loadDerivedFacetValues(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow): Promise<ValueHit[]> {
+    if (field !== "level") return [];
+    const configured = activeFieldMappings.derivedFields?.level ?? [];
+    if (!configured.some((rule) => rule.type === "regex" && rule.value)) return [];
+    const severities = Array.from(
+      new Set(
+        configured
+          .map((rule) => severityKey(rule.value ?? ""))
+          .filter((severity): severity is HistogramSeverity => severity !== "other")
+      )
+    );
+    const step = durationToken(histogramStepMs(baseQuery, window));
+    const values = await Promise.all(
+      severities.map(async (severity) => {
+        const response = await getHits(queryWithExpandedFilters(queryWithLevelBucket(baseQuery, severity), filters), step, window);
+        const hits = normalizeHitBuckets(response).reduce((total, bucket) => total + (Number(bucket.total) || 0), 0);
+        return { value: displayFacetValue(field, severity), hits };
+      })
+    );
+    return values.filter((item) => item.hits > 0).sort((left, right) => right.hits - left.hits);
   }
 
   async function loadFacet(field: string, baseQuery = query, filters = appliedFilters, window = timeWindow) {
@@ -1552,6 +1576,12 @@ function App() {
         const nextValues = Object.fromEntries(
           facetFields.map((field) => [field, mergeFacetValues(field, ...aliasFieldsForFilter(field).map((alias) => batch[alias]))])
         );
+        const derivedEntries = await Promise.all(
+          facetFields.map(async (field) => [field, await loadDerivedFacetValues(field, baseQuery, filters, window)] as const)
+        );
+        derivedEntries.forEach(([field, values]) => {
+          if (values.length > 0) nextValues[field] = values;
+        });
         const hasValues = Object.values(nextValues).some((values) => values.length > 0);
         if (!hasValues) throw new Error("Batched facet response did not include configured alias values.");
         setFacets((current) => ({ ...current, ...nextValues }));
