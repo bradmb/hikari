@@ -487,6 +487,20 @@ function levelFromMessageText(text: string): string {
   if (glogMatch?.[1] === "W") return "warning";
   if (glogMatch?.[1] === "E") return "error";
   if (glogMatch?.[1] === "F") return "fatal";
+  const accessMatch = text.match(/^\S+\s+\[[^\]]+\]\s+\S+\s+\S+\s+[-\d/]+\s+(\d{3})\s+/);
+  if (accessMatch?.[1]) {
+    const status = Number(accessMatch[1]);
+    if (status >= 500) return "error";
+    if (status >= 400) return "warning";
+    return "info";
+  }
+  const httpResponseMatch = text.match(/\bHTTP\/\d(?:\.\d)?\s+(\d{3})\b/);
+  if (httpResponseMatch?.[1]) {
+    const status = Number(httpResponseMatch[1]);
+    if (status >= 500) return "error";
+    if (status >= 400) return "warning";
+    return "info";
+  }
   const normalized = text.toLowerCase();
   if (/(^|[\s[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=/.test(normalized)) return "error";
   if (/(^|[\s[])(warning|warn)([\]\s:|,-]|$)|\swarning=/.test(normalized)) return "warning";
@@ -804,9 +818,9 @@ function levelSearchClauses(value: string): string[] {
     debug: ["[debug]", "[trace]", "[verbose]", " DEBUG ", " TRACE ", " VERBOSE "]
   };
   const messageRegexes: Record<HistogramSeverity, string[]> = {
-    error: ["^[EF]\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}"],
-    warning: ["^W\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}"],
-    info: ["^I\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}"],
+    error: ["^[EF]\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+5\\d\\d\\s+", "\\bHTTP/\\d(?:\\.\\d)?\\s+5\\d\\d\\b"],
+    warning: ["^W\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+4\\d\\d\\s+", "\\bHTTP/\\d(?:\\.\\d)?\\s+4\\d\\d\\b"],
+    info: ["^I\\d{4}\\s+\\d{2}:\\d{2}:\\d{2}", "^\\S+\\s+\\[[^\\]]+\\]\\s+\\S+\\s+\\S+\\s+[-\\d/]+\\s+[123]\\d\\d\\s+", "\\bHTTP/\\d(?:\\.\\d)?\\s+[123]\\d\\d\\b"],
     debug: []
   };
   if (severity === "other") return [filterToken("level", value)];

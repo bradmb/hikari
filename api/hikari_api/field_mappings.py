@@ -201,6 +201,22 @@ def _level_from_message(row: dict[str, Any]) -> str | None:
         glog_match = re.match(r"^\s*([IWEF])\d{4}\s+\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+", raw_text)
         if glog_match:
             return {"I": "info", "W": "warning", "E": "error", "F": "fatal"}[glog_match.group(1)]
+        access_match = re.match(r"^\S+\s+\[[^\]]+\]\s+\S+\s+\S+\s+[-\d/]+\s+(\d{3})\s+", raw_text)
+        if access_match:
+            status = int(access_match.group(1))
+            if status >= 500:
+                return "error"
+            if status >= 400:
+                return "warning"
+            return "info"
+        http_response_match = re.search(r"\bHTTP/\d(?:\.\d)?\s+(\d{3})\b", raw_text)
+        if http_response_match:
+            status = int(http_response_match.group(1))
+            if status >= 500:
+                return "error"
+            if status >= 400:
+                return "warning"
+            return "info"
         text = raw_text.lower()
         if re.search(r"(^|[\s\[])(fatal|critical|error|err)([\]\s:|,-]|$)|\serror=", text):
             return "error"

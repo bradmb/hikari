@@ -290,6 +290,76 @@ def test_search_derives_level_from_kubernetes_glog_prefix():
     assert row["level"] == "warning"
 
 
+def test_search_derives_level_from_haproxy_access_status():
+    class AccessLogLevelClient(FakeVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            return {
+                "rows": [
+                    {
+                        "_time": "2026-05-08T01:06:55Z",
+                        "_msg": '100.80.33.37:49286 [08/May/2026:01:06:55.556] http service_backend/SRV_4 0/0/0/4/4 200 2272 - - --VN 15/15/2/1/0 0/0 "GET app.example.com/resource HTTP/1.1"',
+                        "service": "ingress",
+                    },
+                    {
+                        "_time": "2026-05-08T01:07:55Z",
+                        "_msg": '100.80.33.37:49286 [08/May/2026:01:07:55.556] http service_backend/SRV_4 0/0/0/4/4 503 2272 - - --VN 15/15/2/1/0 0/0 "GET app.example.com/resource HTTP/1.1"',
+                        "service": "ingress",
+                    },
+                ]
+            }
+
+    fake = AccessLogLevelClient()
+
+    def override_fake_client():
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
+
+    rows = response.json()["rows"]
+    assert rows[0]["level"] == "info"
+    assert rows[1]["level"] == "error"
+
+
+def test_search_derives_level_from_http_response_status_text():
+    class HttpResponseLevelClient(FakeVictoriaLogsClient):
+        async def query(self, path: str, data: dict):
+            self.calls.append((path, data))
+            return {
+                "rows": [
+                    {
+                        "_time": "2026-05-08T01:08:41Z",
+                        "_msg": 'HTTP Request: POST http://example.local/select/logsql/field_values "HTTP/1.1 200 OK"',
+                        "service": "hikari",
+                    },
+                    {
+                        "_time": "2026-05-08T01:08:42Z",
+                        "_msg": 'HTTP Request: POST http://example.local/select/logsql/query "HTTP/1.1 503 Service Unavailable"',
+                        "service": "hikari",
+                    },
+                ]
+            }
+
+    fake = HttpResponseLevelClient()
+
+    def override_fake_client():
+        return fake
+
+    from hikari_api.main import client
+
+    app.dependency_overrides[client] = override_fake_client
+    with TestClient(app) as test_client:
+        response = test_client.post("/api/search", json={"query": "_time:15m", "limit": 100})
+
+    rows = response.json()["rows"]
+    assert rows[0]["level"] == "info"
+    assert rows[1]["level"] == "error"
+
+
 def test_hits_facets_and_field_values():
     with TestClient(app) as test_client:
         hits = test_client.post("/api/hits", json={"query": "_time:15m", "step": "1m"})
