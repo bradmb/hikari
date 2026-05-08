@@ -11,7 +11,7 @@ from mcp.client.streamable_http import streamable_http_client
 
 from hikari_api import ai
 from hikari_api import hikari_mcp
-from hikari_api.field_mappings import with_copy_pipes
+from hikari_api.field_mappings import expand_level_filters, normalize_row_aliases, with_copy_pipes
 from hikari_api.main import app
 from hikari_api.models import AiQueryRequest, AiQueryResponse
 from hikari_api.settings import Settings, get_settings
@@ -56,9 +56,26 @@ TEST_FIELD_MAPPINGS = {
         ],
         "host": ["host", "hostname", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
         "hostname": ["hostname", "host", "host.name", "host_name", "MachineName", "kubernetes.pod_node_name", "kubernetes.node_name"],
-        "level": ["level"],
+        "level": ["level", "severity_text", "SeverityText", "severity", "Severity", "severity_number", "SeverityNumber"],
         "kubernetes.pod_namespace": ["kubernetes.pod_namespace", "namespace"],
         "kubernetes.pod_name": ["kubernetes.pod_name", "pod"],
+    },
+    "severity": {
+        "canonicalField": "level",
+        "textFields": ["level", "severity_text", "SeverityText", "severity", "Severity"],
+        "numberFields": ["severity_number", "SeverityNumber"],
+        "values": {
+            "error": ["error", "err", "fatal", "critical"],
+            "warning": ["warning", "warn"],
+            "info": ["info", "information", "informational"],
+            "debug": ["debug", "trace", "verbose"],
+        },
+        "numberRanges": {
+            "debug": [1, 8],
+            "info": [9, 12],
+            "warning": [13, 16],
+            "error": [17, 24],
+        },
     },
     "facets": [
         {"field": "environment", "label": "Environment"},
@@ -268,7 +285,21 @@ def test_configured_facet_aliases_copy_host_and_service_names():
     query = with_copy_pipes("_time:15m", TEST_FIELD_MAPPINGS)
     assert "copy service_name as service" in query
     assert "copy host_name as host" in query
-    assert " as level" not in query
+    assert "copy severity_text as level" in query
+
+
+def test_level_filters_expand_to_structured_severity_fields():
+    query = expand_level_filters('_time:15m level:="error"', TEST_FIELD_MAPPINGS)
+    assert "level:in" in query
+    assert "severity_text:in" in query
+    assert "severity_number:in" in query
+    assert '"Error"' in query
+    assert '"17"' in query
+
+
+def test_rows_normalize_structured_severity_text_and_number():
+    assert normalize_row_aliases({"severity_text": "Error"}, TEST_FIELD_MAPPINGS)["level"] == "error"
+    assert normalize_row_aliases({"severity_number": "13"}, TEST_FIELD_MAPPINGS)["level"] == "warning"
 
 
 def test_tail_errors_are_streamed_as_sse_error_events():
@@ -676,7 +707,6 @@ async def test_mcp_summarize_window_returns_ui_like_facets(monkeypatch):
     assert "kubernetes.container_name" in called_fields
     assert "hostname" in called_fields
     assert "kubernetes.pod_node_name" in called_fields
-    assert "level" in called_fields
     assert "kubernetes.pod_namespace" in called_fields
     assert "kubernetes.pod_name" in called_fields
 
@@ -717,7 +747,8 @@ async def test_mcp_get_facets_defaults_to_summary_fields(monkeypatch):
     await hikari_mcp.get_facets("_time:15m")
 
     facets_call = next(data for path, data in fake.calls if path == "/select/logsql/facets")
-    assert facets_call["field"] == ["service", "host", "level", "kubernetes.pod_namespace", "kubernetes.pod_name"]
+    assert facets_call["field"] == ["service", "host", "kubernetes.pod_namespace", "kubernetes.pod_name"]
+    assert any(path == "/select/logsql/hits" and "severity_text:in" in data["query"] for path, data in fake.calls)
 
 
 @pytest.mark.anyio

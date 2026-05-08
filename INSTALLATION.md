@@ -106,6 +106,7 @@ The mapping has three parts:
 
 - `defaultFields`: fields shown first in manual field selectors and field discovery.
 - `aliases`: source fields that should populate a canonical Hikari field.
+- `severity`: structured severity fields and values that should behave like the canonical `level` field.
 - `facets`: the facet groups shown in the left sidebar and MCP summaries.
 
 Use `aliases` to map your log schema into canonical fields. The first item can be the canonical field itself, followed by every source field that may contain the same value:
@@ -139,10 +140,11 @@ _time:15m | copy service.name as service | copy service_name as service | copy h
 Do not add these copy pipes manually to user-facing saved queries. Configure the
 facet aliases once and let Hikari add them consistently.
 
-Hikari expects canonical facet values to exist as stored VictoriaLogs fields. It does not derive
-`level`, `service`, or `host` from `_msg`, JSON payload text, or access-log strings at read time. Normalize
-those fields in your collector or application before shipping logs to VictoriaLogs. This keeps queries,
-facets, histograms, MCP tools, and AI context fast because VictoriaLogs can do the work directly.
+Hikari expects canonical facet values to come from structured VictoriaLogs fields. It maps structured
+severity fields to the canonical `level` field in the same spirit as the VictoriaLogs Grafana plugin, but it
+does not derive `service`, `host`, or severity from `_msg`, JSON payload text, or access-log strings at read
+time. Normalize message-only values in your collector or application before shipping logs to VictoriaLogs.
+This keeps queries, facets, histograms, MCP tools, and AI context fast because VictoriaLogs can do the work directly.
 
 Use `facets` to choose the canonical fields shown in the left sidebar and MCP summary output:
 
@@ -194,6 +196,33 @@ fieldMappings:
         - kubernetes.pod_node_name
       level:
         - level
+        - severity_text
+        - SeverityText
+        - severity
+        - Severity
+        - severity_number
+        - SeverityNumber
+    severity:
+      canonicalField: level
+      textFields:
+        - level
+        - severity_text
+        - SeverityText
+        - severity
+        - Severity
+      numberFields:
+        - severity_number
+        - SeverityNumber
+      values:
+        error: [error, err, fatal, critical]
+        warning: [warning, warn]
+        info: [info, information, informational]
+        debug: [debug, trace, verbose]
+      numberRanges:
+        debug: [1, 8]
+        info: [9, 12]
+        warning: [13, 16]
+        error: [17, 24]
     facets:
       - field: environment
         label: Environment
@@ -233,8 +262,9 @@ For non-Helm deployments, set `HIKARI_FIELD_MAPPINGS_FILE` to a mounted JSON fil
 
 ## Troubleshooting: Why am I not seeing levels?
 
-Hikari reads `level` as a real VictoriaLogs field. If every row shows `unknown` or `info`, check the data
-that is actually stored in VictoriaLogs before changing the UI.
+Hikari treats `level` as its canonical severity field, but it can map structured source fields such as
+`severity_text`, `SeverityText`, `severity`, and OpenTelemetry `severity_number` into that canonical value.
+If every row shows `unknown` or appears to have the wrong level, check the structured fields stored in VictoriaLogs.
 
 1. Query a recent row and inspect the top-level fields:
 
@@ -242,16 +272,21 @@ that is actually stored in VictoriaLogs before changing the UI.
 _time:15m | limit 1
 ```
 
-2. List observed level values:
+2. List observed severity values:
 
 ```text
 _time:15m level:*
+_time:15m severity_text:*
+_time:15m severity_number:*
 ```
 
-3. If your logs only contain levels inside `_msg` or another message field, update your collector or app
-logger to emit a top-level `level` field before ingestion.
+3. If your logs use a structured field not listed in `severity.textFields` or `severity.numberFields`, add it
+to your field mapping config and redeploy Hikari.
 
-4. For Kubernetes collector deployments, inspect the collector ConfigMap and rollout after changing the
+4. If your logs only contain levels inside `_msg` or another message field, update your collector or app
+logger to emit a structured severity field before ingestion.
+
+5. For Kubernetes collector deployments, inspect the collector ConfigMap and rollout after changing the
 normalization script:
 
 ```powershell
@@ -261,8 +296,8 @@ kubectl -n victorialogs rollout restart daemonset/victorialogs-collector-fluent-
 kubectl -n victorialogs rollout status daemonset/victorialogs-collector-fluent-bit
 ```
 
-5. For application logs that bypass the collector and write directly to VictoriaLogs, configure the
-application logger to include `level` as a top-level attribute.
+6. For application logs that bypass the collector and write directly to VictoriaLogs, prefer normal structured
+severity fields such as OpenTelemetry `severity_text` and `severity_number`; Hikari maps those to `level`.
 
 ## Optional AI Search
 

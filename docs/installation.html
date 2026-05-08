@@ -147,9 +147,10 @@ docker compose up mock-victorialogs api web</code></pre>
             </p>
             <p>
               Hikari expects canonical facet values to exist as stored VictoriaLogs fields. It does not derive
-              <code>level</code>, <code>service</code>, or <code>host</code> from <code>_msg</code>, JSON payload
-              text, or access-log strings at read time. Normalize those fields in your collector or application
-              before shipping logs to VictoriaLogs.
+              <code>service</code> or <code>host</code> from <code>_msg</code>, JSON payload text, or access-log
+              strings at read time. For severity, Hikari maps structured fields such as <code>severity_text</code>,
+              <code>SeverityText</code>, and OpenTelemetry <code>severity_number</code> into the canonical
+              <code>level</code> field for its UI, API, MCP tools, and AI context.
             </p>
             <p>Use <code>facets</code> to choose the canonical groups shown in the sidebar and MCP summaries.</p>
             <pre class="code-sample"><code>{
@@ -199,6 +200,33 @@ docker compose up mock-victorialogs api web</code></pre>
         - kubernetes.pod_node_name
       level:
         - level
+        - severity_text
+        - SeverityText
+        - severity
+        - Severity
+        - severity_number
+        - SeverityNumber
+    severity:
+      canonicalField: level
+      textFields:
+        - level
+        - severity_text
+        - SeverityText
+        - severity
+        - Severity
+      numberFields:
+        - severity_number
+        - SeverityNumber
+      values:
+        error: [error, err, fatal, critical]
+        warning: [warning, warn]
+        info: [info, information, informational]
+        debug: [debug, trace, verbose]
+      numberRanges:
+        debug: [1, 8]
+        info: [9, 12]
+        warning: [13, 16]
+        error: [17, 24]
     facets:
       - field: environment
         label: Environment
@@ -229,15 +257,18 @@ docker compose up mock-victorialogs api web</code></pre>
   --set env.victoriaUrl=http://victorialogs.example.svc:9428</code></pre>
             <h3>Why am I not seeing levels?</h3>
             <p>
-              Hikari reads <code>level</code> as a real VictoriaLogs field. If rows show <code>unknown</code>
+              Hikari reads <code>level</code> as its canonical severity field and can map structured source fields
+              like <code>severity_text</code> and <code>severity_number</code>. If rows show <code>unknown</code>
               or appear to have the wrong level, first inspect the fields stored in VictoriaLogs.
             </p>
             <pre class="code-sample"><code>_time:15m | limit 1
-_time:15m level:*</code></pre>
+_time:15m level:*
+_time:15m severity_text:*
+_time:15m severity_number:*</code></pre>
             <p>
               If the level only appears inside <code>_msg</code> or another message payload, update the collector
-              or application logger to emit a top-level <code>level</code> field before ingestion. For Kubernetes
-              collectors, check the Fluent Bit ConfigMaps and restart the DaemonSet after changing normalization.
+              or application logger to emit a structured severity field before ingestion. For Kubernetes collectors,
+              check the Fluent Bit ConfigMaps and restart the DaemonSet after changing normalization.
             </p>
             <pre class="code-sample"><code>kubectl -n victorialogs get configmap victorialogs-collector-fluent-bit -o yaml
 kubectl -n victorialogs get configmap fluentbit-lua-scripts -o yaml

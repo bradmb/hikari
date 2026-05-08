@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from fastapi import HTTPException
 
-from .field_mappings import get_field_mappings, normalize_rows_aliases, with_copy_pipes
+from .field_mappings import canonical_severity, canonical_severity_number, get_field_mappings, normalize_rows_aliases, severity_config, with_copy_pipes
 from .models import AiQueryRequest, AiQueryResponse
 from .settings import Settings
 from .victorialogs import VictoriaLogsClient
@@ -21,6 +21,12 @@ DISCOVERY_FIELDS = [
     "host",
     "hostname",
     "level",
+    "severity_text",
+    "SeverityText",
+    "severity",
+    "Severity",
+    "severity_number",
+    "SeverityNumber",
     "status",
     "client",
     "kubernetes.pod_namespace",
@@ -91,8 +97,8 @@ async def generate_logsql(settings: Settings, request: AiQueryRequest, vl: Victo
             "Do not simply translate the prompt literally when observed values suggest a different spelling. "
             "When filtering on a structured field, use exact values that appear verbatim in observed field_values "
             "or sample rows. Do not add typo variants or guessed field values to structured field filters. "
-            "For severity, use the canonical level field only. If level is missing, the ingestion pipeline "
-            "needs to normalize levels before Hikari can filter on them. "
+            "For severity, use the canonical level field; Hikari maps that to configured structured severity "
+            "fields such as level, severity_text, SeverityText, severity, and severity_number. "
             "When prior conversation or incident context is provided, treat the new request as a follow-up. "
             "Use the previous query, explanation, evidence, result totals, and sample rows to refine the search "
             "instead of starting over. "
@@ -172,6 +178,7 @@ async def _discover_log_context(settings: Settings, request: AiQueryRequest, vl:
     context: dict[str, Any] = {
         "base_query": base_query,
         "candidate_terms": candidates,
+        "field_mappings": field_mappings,
         "field_values": {},
         "sample_rows": [],
         "matched_observations": [],
@@ -497,15 +504,29 @@ def _unquote_level_filter_value(value: str) -> str:
 
 def _observed_level_field_and_variants(discovery: dict[str, Any], canonical: str) -> tuple[str, list[str]]:
     field_values = discovery.get("field_values", {})
-    return "level", _level_variants_for_field(field_values.get("level", []), canonical)
+    config = discovery.get("field_mappings", {})
+    if not isinstance(config, dict):
+        config = {}
+    severity = severity_config(config)
+    values: list[str] = []
+    for field in severity.get("textFields", ["level"]):
+        values.extend(_level_variants_for_field(field_values.get(field, []), canonical, config))
+    for field in severity.get("numberFields", []):
+        for item in field_values.get(field, []):
+            value = str(item.get("value", "")).strip() if isinstance(item, dict) else str(item).strip()
+            if value and canonical_severity_number(value, config) == canonical:
+                values.append(canonical)
+                break
+    return "level", list(dict.fromkeys(values))
 
 
-def _level_variants_for_field(levels: list[Any], canonical: str) -> list[str]:
+def _level_variants_for_field(levels: list[Any], canonical: str, config: dict[str, Any] | None = None) -> list[str]:
     values: list[str] = []
     seen: set[str] = set()
+    field_config = config or {}
     for item in levels:
         value = str(item.get("value", "")).strip() if isinstance(item, dict) else str(item).strip()
-        if not value or _canonical_level(value) != canonical or value in seen:
+        if not value or (canonical_severity(value, field_config) or _canonical_level(value)) != canonical or value in seen:
             continue
         seen.add(value)
         values.append(value)
