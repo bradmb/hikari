@@ -663,6 +663,16 @@ function normalizeHitBuckets(result: HitsResponse): HitBucket[] {
   });
 }
 
+function levelFacetValuesFromHits(series: HistogramSeveritySeries): ValueHit[] {
+  return (Object.entries(series) as Array<[HistogramSeverity, HitBucket[]]>)
+    .map(([severity, buckets]) => ({
+      value: displayFacetValue("level", severity),
+      hits: buckets.reduce((total, bucket) => total + countFromHit(bucket), 0)
+    }))
+    .filter((item) => item.hits > 0)
+    .sort((left, right) => right.hits - left.hits);
+}
+
 /** Extract a value from Promise.allSettled without making optional telemetry requests fatal. */
 function settledValue<T>(result: PromiseSettledResult<T>, fallback: T): T {
   return result.status === "fulfilled" ? result.value : fallback;
@@ -1491,18 +1501,19 @@ function App() {
       }
       setAiRelaxations(relaxations);
       setHits(normalizeHitBuckets(hitsResponse));
-      setHistogramLevelHits({
+      const nextHistogramLevelHits = {
         error: normalizeHitBuckets(settledValue<HitsResponse>(errorHitResult, { values: [] })),
         warning: normalizeHitBuckets(settledValue<HitsResponse>(warningHitResult, { values: [] })),
         info: normalizeHitBuckets(settledValue<HitsResponse>(infoHitResult, { values: [] })),
         debug: normalizeHitBuckets(settledValue<HitsResponse>(debugHitResult, { values: [] }))
-      });
+      };
+      setHistogramLevelHits(nextHistogramLevelHits);
       const nextFields = (fieldsResponse.values ?? [])
         .map((item) => item.value.trim())
         .filter(Boolean)
         .slice(0, 24);
       setFields(Array.from(new Set([...fieldMappings.defaultFields, ...nextFields])));
-      void refreshFacets(activeQuery, activeFilters, activeWindow);
+      void refreshFacets(activeQuery, activeFilters, activeWindow, { level: levelFacetValuesFromHits(nextHistogramLevelHits) });
       return { query: activeQuery, relaxations };
     } catch (err) {
       if (!isCurrentRun()) return { query: nextQuery, relaxations: [] };
@@ -1537,7 +1548,7 @@ function App() {
     const values = await Promise.all(
       severities.map(async (severity) => {
         const response = await getHits(queryWithExpandedFilters(queryWithLevelBucket(baseQuery, severity), filters), step, window);
-        const hits = normalizeHitBuckets(response).reduce((total, bucket) => total + (Number(bucket.total) || 0), 0);
+        const hits = normalizeHitBuckets(response).reduce((total, bucket) => total + countFromHit(bucket), 0);
         return { value: displayFacetValue(field, severity), hits };
       })
     );
@@ -1561,7 +1572,12 @@ function App() {
   }
 
   /** Refresh sidebar facets, preferring one batched backend call over many per-field requests. */
-  async function refreshFacets(baseQuery = query, filters = appliedFilters, window = timeWindow) {
+  async function refreshFacets(
+    baseQuery = query,
+    filters = appliedFilters,
+    window = timeWindow,
+    precomputedDerivedFacets: Record<string, ValueHit[]> = {}
+  ) {
     const runId = ++facetRunIdRef.current;
     const isCurrentRun = () => runId === facetRunIdRef.current;
     const facetFields = fieldMappings.facets.map(({ field }) => field);
@@ -1577,7 +1593,12 @@ function App() {
           facetFields.map((field) => [field, mergeFacetValues(field, ...aliasFieldsForFilter(field).map((alias) => batch[alias]))])
         );
         const derivedEntries = await Promise.all(
-          facetFields.map(async (field) => [field, await loadDerivedFacetValues(field, baseQuery, filters, window)] as const)
+          facetFields.map(async (field) => [
+            field,
+            Object.prototype.hasOwnProperty.call(precomputedDerivedFacets, field)
+              ? precomputedDerivedFacets[field]
+              : await loadDerivedFacetValues(field, baseQuery, filters, window)
+          ] as const)
         );
         derivedEntries.forEach(([field, values]) => {
           if (values.length > 0) nextValues[field] = values;
@@ -1598,7 +1619,14 @@ function App() {
       // Fall back to per-field loading below. Older or mocked VictoriaLogs responses may not support batch facets.
     }
 
-    const entries = await Promise.all(facetFields.map(async (field) => [field, await loadFacetValues(field, baseQuery, filters, window)] as const));
+    const entries = await Promise.all(
+      facetFields.map(async (field) => [
+        field,
+        Object.prototype.hasOwnProperty.call(precomputedDerivedFacets, field)
+          ? precomputedDerivedFacets[field]
+          : await loadFacetValues(field, baseQuery, filters, window)
+      ] as const)
+    );
     if (!isCurrentRun()) return;
     const nextValues = Object.fromEntries(entries);
     setFacets((current) => ({ ...current, ...nextValues }));
