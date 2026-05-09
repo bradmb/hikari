@@ -53,6 +53,7 @@ Common environment variables:
 - `HIKARI_VICTORIA_BEARER_TOKEN`: optional bearer token for VictoriaLogs.
 - `HIKARI_VICTORIA_HEADERS`: optional JSON object of extra headers for VictoriaLogs.
 - `HIKARI_DEFAULT_QUERY`: default LogsQL query, usually `_time:15m`.
+- `HIKARI_DEFAULT_PAGE`: startup landing mode for `/`, either `browse` (default) or `ai`.
 - `HIKARI_DEFAULT_FIELDS`: comma-separated fields to surface in the UI.
 - `HIKARI_FIELD_MAPPINGS_FILE`: JSON file that defines canonical fields, aliases, and default facets.
 - `HIKARI_FIELD_MAPPINGS`: optional inline JSON override for field mappings.

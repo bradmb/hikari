@@ -52,6 +52,8 @@ spec:
               value: {{ .Values.env.victoriaUrl | quote }}
             - name: HIKARI_FIELD_MAPPINGS_FILE
               value: {{ .Values.env.fieldMappingsFile | quote }}
+            - name: HIKARI_DEFAULT_PAGE
+              value: {{ .Values.env.defaultPage | quote }}
             - name: HIKARI_FACET_PREVIEW_LIMIT
               value: {{ .Values.env.facetPreviewLimit | quote }}
             {{- if .Values.env.openAiSecretName }}

@@ -28,6 +28,7 @@ class Settings(BaseSettings):
         alias="HIKARI_VICTORIA_HEADERS_SECRET_ID",
     )
     default_query: str = Field("_time:15m", alias="HIKARI_DEFAULT_QUERY")
+    default_page: str = Field("browse", alias="HIKARI_DEFAULT_PAGE")
     default_fields: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["host", "service", "source", "level", "status", "environment", "client"],
         alias="HIKARI_DEFAULT_FIELDS",
@@ -64,6 +65,14 @@ class Settings(BaseSettings):
         if isinstance(value, list):
             return [str(field) for field in value]
         raise ValueError("HIKARI_DEFAULT_FIELDS must be a comma-separated string")
+
+    @field_validator("default_page", mode="before")
+    @classmethod
+    def parse_default_page(cls, value: object) -> str:
+        if value is None:
+            return "browse"
+        normalized = str(value).strip().lower()
+        return normalized if normalized in {"browse", "ai"} else "browse"
 
     @field_validator("field_mappings", mode="before")
     @classmethod

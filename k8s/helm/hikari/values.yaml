@@ -23,6 +23,7 @@ env:
   awsRegion: ""
   victoriaUrl: http://victorialogs.example.svc:9428
   fieldMappingsFile: /app/config/field-mappings.json
+  defaultPage: browse
   facetPreviewLimit: 10
   openAiSecretId: ""
   openAiSecretName: ""

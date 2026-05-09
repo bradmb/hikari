@@ -139,6 +139,17 @@ def override_settings() -> Settings:
     )
 
 
+def override_settings_with_default_page(page: str, ai_enabled: bool = True) -> Settings:
+    return Settings(
+        HIKARI_VICTORIA_URL="http://victorialogs",
+        HIKARI_DEFAULT_QUERY="_time:15m",
+        HIKARI_DEFAULT_FIELDS="service,level",
+        HIKARI_FIELD_MAPPINGS=TEST_FIELD_MAPPINGS,
+        HIKARI_DEFAULT_PAGE=page,
+        OPENAI_API_KEY="test-key" if ai_enabled else "",
+    )
+
+
 def override_settings_without_ai() -> Settings:
     return Settings(
         HIKARI_VICTORIA_URL="http://victorialogs",
@@ -447,6 +458,30 @@ def test_config_reports_ai_disabled_without_openai_key():
     assert response.status_code == 200
     assert response.json()["aiEnabled"] is False
     assert response.json()["facetPreviewLimit"] == 10
+
+
+def test_config_reports_default_page_browse_when_unset():
+    app.dependency_overrides[get_settings] = override_settings
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/config")
+    assert response.status_code == 200
+    assert response.json()["defaultPage"] == "browse"
+
+
+def test_config_reports_default_page_ai():
+    app.dependency_overrides[get_settings] = lambda: override_settings_with_default_page("ai")
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/config")
+    assert response.status_code == 200
+    assert response.json()["defaultPage"] == "ai"
+
+
+def test_config_normalizes_invalid_default_page():
+    app.dependency_overrides[get_settings] = lambda: override_settings_with_default_page("invalid")
+    with TestClient(app) as test_client:
+        response = test_client.get("/api/config")
+    assert response.status_code == 200
+    assert response.json()["defaultPage"] == "browse"
 
 
 def test_configured_facet_aliases_copy_host_and_service_names():

@@ -96,6 +96,14 @@ HIKARI_VICTORIA_HEADERS={"X-Example-Header":"replace-me"}
 
 Keep secrets out of committed files.
 
+Set `HIKARI_DEFAULT_PAGE` if you want `/` to route to the AI screen by default:
+
+```env
+HIKARI_DEFAULT_PAGE=ai
+```
+
+Accepted values are `browse` (default) and `ai`.
+
 ## Field Mappings
 
 Hikari resolves display columns, facets, MCP summaries, and hidden query alias expansion from `config/field-mappings.json`. This file is the place to adapt Hikari to your log schema.

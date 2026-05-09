@@ -110,11 +110,16 @@ docker compose up mock-victorialogs api web</code></pre>
               <div role="row"><code>HIKARI_VICTORIA_HEADERS</code><span>Optional JSON object of extra headers for VictoriaLogs.</span></div>
               <div role="row"><code>HIKARI_FIELD_MAPPINGS_FILE</code><span>JSON file that defines canonical fields, facet aliases, and sidebar facets.</span></div>
               <div role="row"><code>HIKARI_FIELD_MAPPINGS</code><span>Optional inline JSON override for field mappings.</span></div>
+              <div role="row"><code>HIKARI_DEFAULT_PAGE</code><span>Sets startup route for <code>/</code>. Use <code>browse</code> (default) or <code>ai</code>.</span></div>
               <div role="row"><code>HIKARI_FACET_PREVIEW_LIMIT</code><span>Number of values shown per facet before the <code>View more</code> expander appears. Defaults to <code>10</code>.</span></div>
               <div role="row"><code>OPENAI_API_KEY</code><span>Optional key for natural-language query generation. Inject this directly from your platform's secret mechanism.</span></div>
               <div role="row"><code>HIKARI_OPENAI_API_KEY_SECRET_ID</code><span>Optional AWS Secrets Manager secret ID for AWS deployments that load the OpenAI key at runtime.</span></div>
               <div role="row"><code>HIKARI_OPENAI_MODEL</code><span>Model used for natural-language query generation.</span></div>
             </div>
+            <p>
+              By default, <code>HIKARI_DEFAULT_PAGE</code> is <code>browse</code>, so the root path routes to
+              <code>/browse</code>. Set it to <code>ai</code> to route <code>/</code> to <code>/ai</code>.
+            </p>
           </section>
 
           <section id="facet-mapping" class="docs-section">

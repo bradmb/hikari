@@ -64,6 +64,7 @@ type AppliedFilter = {
 };
 
 type ViewMode = "welcome" | "answer" | "explore";
+type DefaultPage = "browse" | "ai";
 
 const defaultLogQuery = "_time:15m";
 const timePresets = [
@@ -82,8 +83,19 @@ const selectedEventParam = "event";
 const selectedEventStoragePrefix = "hikari:selected-event:";
 const timeFilterPattern = /\b_time:(?:\[[^\]\)]*[\]\)]|day_range[\[\(][^\]\)]*[\]\)]|week_range[\[\(][^\]\)]*[\]\)]|[^\s)]+)/;
 
-function modeFromPath(pathname: string): ViewMode {
-  return pathname === "/browse" ? "explore" : "welcome";
+function normalizeDefaultPage(value: string | null | undefined): DefaultPage {
+  return value === "ai" ? "ai" : "browse";
+}
+
+function pathFromMode(mode: ViewMode): string {
+  return mode === "explore" ? "/browse" : "/ai";
+}
+
+function modeFromPath(pathname: string, defaultPage: DefaultPage = "browse", aiEnabled: boolean | null = null): ViewMode {
+  if (pathname === "/browse") return "explore";
+  if (pathname === "/ai") return aiEnabled === false ? "explore" : "welcome";
+  if (pathname === "/") return defaultPage === "ai" && aiEnabled === true ? "welcome" : "explore";
+  return "welcome";
 }
 
 function selectedEventIdFromUrl(): string | null {
@@ -261,7 +273,7 @@ function buildAppUrl(
   } else {
     params.delete(selectedEventParam);
   }
-  const path = mode === "explore" ? "/browse" : "/";
+  const path = pathFromMode(mode);
   const query = params.toString();
   return `${path}${query ? `?${query}` : ""}`;
 }
@@ -1268,6 +1280,7 @@ function App() {
   const [live, setLive] = useState(false);
   const [liveStatus, setLiveStatus] = useState<"off" | "connecting" | "streaming" | "reconnecting" | "error">("off");
   const [mode, setMode] = useState<ViewMode>(() => modeFromPath(window.location.pathname));
+  const [defaultPage, setDefaultPage] = useState<DefaultPage>("browse");
   const [timeMenuOpen, setTimeMenuOpen] = useState(false);
   const [customStart, setCustomStart] = useState(() => toDatetimeLocal(initialLogState.window.start));
   const [customEnd, setCustomEnd] = useState(() => toDatetimeLocal(initialLogState.window.end));
@@ -1297,7 +1310,8 @@ function App() {
     nextFilters = appliedFilters,
     nextWindow = timeWindow
   ) {
-    if (!["/", "/browse"].includes(window.location.pathname)) return;
+    if (!configReady && window.location.pathname === "/") return;
+    if (!["/", "/browse", "/ai"].includes(window.location.pathname)) return;
     const next = buildAppUrl(nextMode, eventId, nextQuery, nextFilters, nextWindow);
     const current = `${window.location.pathname}${window.location.search}`;
     if (current === next) return;
@@ -1340,7 +1354,7 @@ function App() {
 
   useEffect(() => {
     function handlePopState() {
-      const nextMode = modeFromPath(window.location.pathname);
+      const nextMode = modeFromPath(window.location.pathname, defaultPage, aiEnabled);
       const nextState = logStateFromUrl();
       setMode(nextMode);
       setQuery(nextState.query);
@@ -1367,8 +1381,9 @@ function App() {
       if (appliedFilters.length > 0) setAppliedFilters([]);
       if (hasTimeWindow(timeWindow)) setTimeWindow({});
     }
+    if (!configReady && window.location.pathname === "/") return;
     updateAppUrl(mode, mode === "explore" ? selectedEventIdRef.current : null);
-  }, [mode, selected]);
+  }, [mode, selected, configReady]);
 
   /** Run the visible query and update every dependent panel, ignoring stale responses from older runs. */
   async function runSearch(
@@ -1760,15 +1775,28 @@ function App() {
         setFields(config.fieldMappings.defaultFields);
         setFacetPreviewLimit(Math.max(1, Math.min(250, Math.floor(config.facetPreviewLimit ?? 10))));
         setAiEnabled(config.aiEnabled);
-        if (!config.aiEnabled && mode !== "explore") setMode("explore");
+        const nextDefaultPage = normalizeDefaultPage(config.defaultPage);
+        setDefaultPage(nextDefaultPage);
+        const nextMode = modeFromPath(window.location.pathname, nextDefaultPage, config.aiEnabled);
+        if (window.location.pathname === "/" || window.location.pathname === "/ai") {
+          if (mode !== nextMode) setMode(nextMode);
+        } else if (!config.aiEnabled && mode !== "explore") {
+          setMode("explore");
+        }
         setConfigReady(true);
       })
       .catch(() => {
         if (cancelled) return;
         setActiveFieldMappings(emptyFieldMappings);
         setFieldMappings(emptyFieldMappings);
+        setDefaultPage("browse");
         setAiEnabled(false);
-        if (mode !== "explore") setMode("explore");
+        const nextMode = modeFromPath(window.location.pathname, "browse", false);
+        if (window.location.pathname === "/" || window.location.pathname === "/ai") {
+          if (mode !== nextMode) setMode(nextMode);
+        } else if (mode !== "explore") {
+          setMode("explore");
+        }
         setConfigReady(true);
       });
     return () => {
